@@ -1,0 +1,31 @@
+[project]
+name = "cd-player"
+version = "0.1.0"
+description = "Raspberry Pi CD player appliance that streams ripped audio to a Sonos speaker"
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = [
+    "flask>=3.0",
+    "waitress>=3.0",
+    "soco>=0.30",
+    "discid>=1.2",
+    "musicbrainzngs>=0.7",
+    "requests>=2.31",
+    "pyudev>=0.24",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+cd-player = "cd_player.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["cd_player*"]
