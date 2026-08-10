@@ -55,6 +55,11 @@ class PlayerStateMachine:
         playback -- that only ever happens via an explicit `play()` call.
         """
         with self._lock:
+            if self._state != PlayerState.STOPPED:
+                # Without this, Sonos keeps reporting PLAYING for the
+                # stream we're about to tear down -- the next poll would
+                # copy that stale state onto the freshly reset player below.
+                self._sonos.stop()
             self._teardown_all_sessions()
             self._toc = toc
             self._metadata = metadata

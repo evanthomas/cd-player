@@ -6,6 +6,7 @@ only ever happens via an explicit REST `play` call.
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from dataclasses import replace
 
@@ -28,6 +29,10 @@ class DiscMonitor:
         player: PlayerStateMachine,
     ):
         self._device_path = device_path
+        # udev events report the canonical /dev/srN node, never the by-id
+        # symlink `device_path` is typically configured as -- resolve once
+        # up front so runtime events can be matched against it.
+        self._device_node = os.path.realpath(device_path)
         self._artwork_cache_dir = artwork_cache_dir
         self._cache = cache
         self._player = player
@@ -51,7 +56,7 @@ class DiscMonitor:
 
     def _run(self) -> None:
         for device in iter(self._monitor.poll, None):
-            if device.device_node != self._device_path:
+            if device.device_node != self._device_node:
                 continue
             if device.get("ID_CDROM_MEDIA") == "1":
                 self._handle_insert()
