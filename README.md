@@ -34,37 +34,40 @@ python3 -m venv .venv
 
 ## Configuration
 
-Configuration is entirely via environment variables (see `cd_player/config.py`).
+Configuration is entirely via command-line arguments (see `cd_player/config.py`).
+Run `cd-player --help` for the full list.
 
-| Variable | Required | Default | Purpose |
+| Argument | Required | Default | Purpose |
 |---|---|---|---|
-| `CD_PLAYER_SONOS_IP` | yes | — | IP address of the target Sonos speaker |
-| `CD_PLAYER_ADVERTISE_HOST` | yes | — | This Pi's LAN IP, reachable by the Sonos speaker (used to build stream URLs) |
-| `CD_PLAYER_DEVICE_PATH` | no | `/dev/disk/by-id/usb-cd0` | Path to the optical drive. Use a stable `/dev/disk/by-id/...` symlink, not `/dev/sr0`, since drive enumeration order isn't guaranteed |
-| `CD_PLAYER_DB_PATH` | no | `/var/lib/cd-player/cache.db` | SQLite metadata cache (avoids re-querying MusicBrainz for a disc you've already seen) |
-| `CD_PLAYER_ARTWORK_DIR` | no | `/var/lib/cd-player/artwork` | Cached cover art |
-| `CD_PLAYER_STREAM_DIR` | no | `/dev/shm/cd-player` | Where in-progress rips are written. Keep this on tmpfs — it's written continuously while a track plays |
-| `CD_PLAYER_BIND_HOST` | no | `0.0.0.0` | Interface the REST/streaming server binds to |
-| `CD_PLAYER_BIND_PORT` | no | `8080` | Port for the REST/streaming server |
-| `CD_PLAYER_SONOS_POLL_INTERVAL` | no | `1.5` | Seconds between polls of Sonos's own transport state, used to detect play/pause triggered from the Sonos app itself |
+| `--speaker-name` | yes | — | Room/player name of the target Sonos speaker, as shown in the Sonos app (e.g. `Study`). Discovered on the network at startup |
+| `--advertise-host` | yes | — | This Pi's LAN IP, reachable by the Sonos speaker (used to build stream URLs) |
+| `--device-path` | no | `/dev/disk/by-id/usb-cd0` | Path to the optical drive. Use a stable `/dev/disk/by-id/...` symlink, not `/dev/sr0`, since drive enumeration order isn't guaranteed |
+| `--db-path` | no | `/var/lib/cd-player/cache.db` | SQLite metadata cache (avoids re-querying MusicBrainz for a disc you've already seen) |
+| `--artwork-dir` | no | `/var/lib/cd-player/artwork` | Cached cover art |
+| `--stream-dir` | no | `/dev/shm/cd-player` | Where in-progress rips are written. Keep this on tmpfs — it's written continuously while a track plays |
+| `--bind-host` | no | `0.0.0.0` | Interface the REST/streaming server binds to |
+| `--bind-port` | no | `8080` | Port for the REST/streaming server |
+| `--sonos-poll-interval` | no | `1.5` | Seconds between polls of Sonos's own transport state, used to detect play/pause triggered from the Sonos app itself |
 
-The default `CD_PLAYER_DB_PATH`/`CD_PLAYER_ARTWORK_DIR` live under `/var/lib`, which
-typically needs root to create. Either run as a systemd service with a `StateDirectory=`,
-or point both at a directory your user owns, e.g.:
+The default `--db-path`/`--artwork-dir` live under `/var/lib`, which typically needs root
+to create. Either run as a systemd service with a `StateDirectory=`, or point both at a
+directory your user owns, e.g.:
 
 ```bash
 mkdir -p ~/.local/share/cd-player/artwork
-export CD_PLAYER_DB_PATH=~/.local/share/cd-player/cache.db
-export CD_PLAYER_ARTWORK_DIR=~/.local/share/cd-player/artwork
+.venv/bin/cd-player \
+  --db-path ~/.local/share/cd-player/cache.db \
+  --artwork-dir ~/.local/share/cd-player/artwork \
+  ...
 ```
 
 ## Running
 
 ```bash
-export CD_PLAYER_SONOS_IP=192.168.1.72        # your speaker's IP
-export CD_PLAYER_ADVERTISE_HOST=192.168.1.41  # this Pi's IP
-export CD_PLAYER_DEVICE_PATH=/dev/disk/by-id/usb-...
-.venv/bin/cd-player
+.venv/bin/cd-player \
+  --speaker-name Study \
+  --advertise-host 192.168.1.41 \
+  --device-path /dev/disk/by-id/usb-...
 ```
 
 Inserting a disc only triggers identification (TOC read + metadata lookup) — it never
@@ -107,8 +110,10 @@ it needs real hardware.
 - Track titles don't currently show up in the Sonos app itself (Sonos regenerates its own
   display title from the stream URL for ad-hoc HTTP sources rather than trusting the
   provided metadata). Full track/artist/album info is always available via `/status`.
-- A single, fixed Sonos speaker is supported, configured by IP — there's no
-  runtime speaker selection or multi-room grouping.
+- A single, fixed Sonos speaker is supported, configured by room name and resolved via
+  network discovery at startup — there's no runtime speaker selection or multi-room
+  grouping, and the speaker must already be powered on and reachable when `cd-player`
+  starts.
 - If the optical drive can't keep up with playback (e.g. a heavily scratched disc), Sonos
   may stall waiting on the stream; this isn't actively handled.
 

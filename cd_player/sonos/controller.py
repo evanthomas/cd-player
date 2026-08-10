@@ -5,6 +5,7 @@ from __future__ import annotations
 from xml.sax.saxutils import escape
 
 import soco
+from soco.discovery import by_name
 
 
 def _format_duration(seconds: float) -> str:
@@ -39,8 +40,13 @@ def _build_track_metadata(title: str, uri: str, duration_seconds: float) -> str:
 
 
 class SonosController:
-    def __init__(self, speaker_ip: str):
-        self._device = soco.SoCo(speaker_ip)
+    def __init__(self, speaker_name: str):
+        device = by_name(speaker_name)
+        if device is None:
+            raise RuntimeError(
+                f"no Sonos speaker named {speaker_name!r} found on the network"
+            )
+        self._device: soco.SoCo = device
 
     def play_uri(self, url: str, title: str = "", duration_seconds: float = 0.0) -> None:
         meta = _build_track_metadata(title, url, duration_seconds)

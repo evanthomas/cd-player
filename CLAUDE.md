@@ -26,7 +26,7 @@ System deps (not pip-installable): `sudo apt install cdparanoia libdiscid0`.
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
 .venv/bin/pytest tests/                                       # run all tests
 .venv/bin/pytest tests/test_state.py -v                       # single file
-.venv/bin/cd-player                                            # run the app (needs env vars, see README.md)
+.venv/bin/cd-player                                            # run the app (needs CLI args, see README.md / --help)
 ```
 
 The test suite needs no real hardware (CD drive, Sonos speaker) — it runs entirely against
@@ -53,6 +53,22 @@ Sonos treat it as a normal seekable track instead of an open-ended stream.
 `state.py` also pre-rips one track ahead once the current track's rip finishes (drive
 freed up), so end-of-track auto-advance is gapless — but never two tracks at once, since
 one physical drive can't be read by two `cdparanoia` processes concurrently.
+
+`disc/monitor.py`'s `DiscMonitor` watches the drive via `pyudev` and drives disc
+identification on insert/eject; it never starts playback itself (that's always an explicit
+REST `play`). On insert it reads the TOC (`disc/toc.py`), checks `metadata/cache.py`'s
+SQLite cache by disc ID, and on a miss queries MusicBrainz + the Cover Art Archive
+(`metadata/musicbrainz.py`, `metadata/coverart.py`) before handing the TOC and metadata to
+`PlayerStateMachine.set_disc()`. `main.py`'s `create_app()` is where all of this — state
+machine, registry, controller, monitor, poller, Flask blueprints — gets wired together.
+
+`config.py` builds `Config` from CLI args (`argparse`), not environment variables —
+`load_config()`/`build_arg_parser()` are the source of truth for flags and defaults, not
+the README table (keep both in sync when adding a flag). The Sonos speaker is identified
+by room name (`--speaker-name`, e.g. `Study`), not IP: `SonosController.__init__` resolves
+it via `soco.discovery.by_name()` at startup, which blocks on a network scan and raises if
+the speaker isn't found — the speaker must be powered on and reachable before `cd-player`
+starts.
 
 ### Gotchas (found via real-hardware testing, not from reading Sonos/UPnP docs)
 

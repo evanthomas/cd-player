@@ -16,11 +16,11 @@ from cd_player.state import PlayerStateMachine
 from cd_player.streaming.stream_server import build_stream_blueprint
 
 
-def create_app() -> tuple[Flask, SonosPoller, DiscMonitor, Config]:
-    config = load_config()
+def create_app(argv: list[str] | None = None) -> tuple[Flask, SonosPoller, DiscMonitor, Config]:
+    config = load_config(argv)
 
     registry = RipSessionRegistry()
-    sonos = SonosController(config.sonos_speaker_ip)
+    sonos = SonosController(config.sonos_speaker_name)
     player = PlayerStateMachine(config, sonos, registry)
     cache = MetadataCache(config.db_path)
 

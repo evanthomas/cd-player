@@ -1,19 +1,19 @@
 """Central configuration for the CD player appliance.
 
-All values are read from environment variables so the same code runs
+All values are read from command-line arguments so the same code runs
 unmodified across dev machines and the deployed Pi; defaults target a
 typical single-drive, single-speaker Pi setup.
 """
 
 from __future__ import annotations
 
-import os
+import argparse
 from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class Config:
-    sonos_speaker_ip: str
+    sonos_speaker_name: str
     cd_device_path: str
     db_path: str
     stream_cache_dir: str
@@ -24,40 +24,83 @@ class Config:
     sonos_poll_interval_seconds: float
 
 
-def load_config() -> Config:
-    sonos_speaker_ip = os.environ.get("CD_PLAYER_SONOS_IP")
-    if not sonos_speaker_ip:
-        raise RuntimeError(
-            "CD_PLAYER_SONOS_IP must be set to the fixed target Sonos speaker's IP address"
-        )
-
-    bind_host = os.environ.get("CD_PLAYER_BIND_HOST", "0.0.0.0")
-    bind_port = int(os.environ.get("CD_PLAYER_BIND_PORT", "8080"))
-
-    # Sonos must be able to reach this host:port over the LAN to pull the
-    # audio stream; it is deliberately separate from bind_host (which may be
-    # 0.0.0.0) since Sonos needs a concrete, routable address.
-    stream_advertise_host = os.environ.get("CD_PLAYER_ADVERTISE_HOST")
-    if not stream_advertise_host:
-        raise RuntimeError(
-            "CD_PLAYER_ADVERTISE_HOST must be set to this Pi's LAN IP, "
-            "reachable by the Sonos speaker"
-        )
-
-    return Config(
-        sonos_speaker_ip=sonos_speaker_ip,
-        cd_device_path=os.environ.get(
-            "CD_PLAYER_DEVICE_PATH", "/dev/disk/by-id/usb-cd0"
-        ),
-        db_path=os.environ.get("CD_PLAYER_DB_PATH", "/var/lib/cd-player/cache.db"),
-        stream_cache_dir=os.environ.get("CD_PLAYER_STREAM_DIR", "/dev/shm/cd-player"),
-        artwork_cache_dir=os.environ.get(
-            "CD_PLAYER_ARTWORK_DIR", "/var/lib/cd-player/artwork"
-        ),
-        bind_host=bind_host,
-        bind_port=bind_port,
-        stream_base_url=f"http://{stream_advertise_host}:{bind_port}",
-        sonos_poll_interval_seconds=float(
-            os.environ.get("CD_PLAYER_SONOS_POLL_INTERVAL", "1.5")
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="cd-player", description="CD player appliance that streams to a Sonos speaker"
+    )
+    parser.add_argument(
+        "--speaker-name",
+        required=True,
+        help="Room/player name of the target Sonos speaker, as shown in the Sonos app "
+        "(e.g. 'Study'). Discovered on the network at startup -- the speaker must be "
+        "powered on and reachable.",
+    )
+    parser.add_argument(
+        "--advertise-host",
+        required=True,
+        help=(
+            "This Pi's LAN IP, reachable by the Sonos speaker (used to build stream "
+            "URLs). Deliberately separate from --bind-host, which may be 0.0.0.0: "
+            "Sonos needs a concrete, routable address to pull audio from."
         ),
     )
+    parser.add_argument(
+        "--device-path",
+        default="/dev/disk/by-id/usb-cd0",
+        help="Path to the optical drive. Use a stable /dev/disk/by-id/... symlink, "
+        "not /dev/sr0, since drive enumeration order isn't guaranteed (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--db-path",
+        default="/var/lib/cd-player/cache.db",
+        help="SQLite metadata cache path (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--stream-dir",
+        default="/dev/shm/cd-player",
+        help="Where in-progress rips are written. Keep this on tmpfs (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--artwork-dir",
+        default="/var/lib/cd-player/artwork",
+        help="Cached cover art directory (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--bind-host",
+        default="0.0.0.0",
+        help="Interface the REST/streaming server binds to (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--bind-port",
+        type=int,
+        default=8080,
+        help="Port for the REST/streaming server (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--sonos-poll-interval",
+        type=float,
+        default=1.5,
+        help="Seconds between polls of Sonos's own transport state, used to detect "
+        "play/pause triggered from the Sonos app itself (default: %(default)s)",
+    )
+    return parser
+
+
+def config_from_args(args: argparse.Namespace) -> Config:
+    return Config(
+        sonos_speaker_name=args.speaker_name,
+        cd_device_path=args.device_path,
+        db_path=args.db_path,
+        stream_cache_dir=args.stream_dir,
+        artwork_cache_dir=args.artwork_dir,
+        bind_host=args.bind_host,
+        bind_port=args.bind_port,
+        stream_base_url=f"http://{args.advertise_host}:{args.bind_port}",
+        sonos_poll_interval_seconds=args.sonos_poll_interval,
+    )
+
+
+def load_config(argv: list[str] | None = None) -> Config:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+    return config_from_args(args)

@@ -62,7 +62,7 @@ def make_toc(num_tracks=3) -> DiscToc:
 
 def make_player() -> tuple[PlayerStateMachine, FakeSonosController]:
     config = Config(
-        sonos_speaker_ip="10.0.0.5",
+        sonos_speaker_name="Study",
         cd_device_path="/dev/fake-cd",
         db_path="/tmp/fake.db",
         stream_cache_dir="/tmp/fake-stream",
