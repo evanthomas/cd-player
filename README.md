@@ -13,8 +13,10 @@ read off the disc.
 
 ## Hardware
 
-- Raspberry Pi
+- Raspberry Pi 5 (an earlier Pi didn't supply enough power for the optical drive plus the
+  screen)
 - USB optical drive
+- A screen
 - A Sonos speaker on the same LAN
 
 ## System dependencies

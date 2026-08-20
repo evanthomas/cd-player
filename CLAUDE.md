@@ -1,22 +1,14 @@
 # CLAUDE.md
 
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
 ## Project Context
-When working with this codebase, prioritize readability over cleverness. Ask clarifying questions before making architectural changes.
+Prioritize readability over cleverness. Ask clarifying questions before making architectural changes.
 
-## Introduction
-The overall goal is build a music CD player that play old fashioned CD player that will load CDs and play them to Sonos speakers on the local network. The physical components of the project are:
-- a Raspberry Pi
-- an optical drive connected by USB
-
-The user will insert a CD into the drive. The software will retrieve CD information and artowrk from appropriate internet resources.
-
-The initial interface will be via the command line, e.g. using REST POST calls to the main program. The software will respond to the following commands:
-- play: If the CD is stopped, connect to the speaker and play from the beginning. If paused then resume play.
-- pause: Pause play, do not disconnect from the speaker.
-- stop: Stop play, disconnect from the speaker
-- skip track forward 
-- skip track backwards
-The player will also respond to pause/restart commands issued to the speaker via the Sonos app.
+A Raspberry Pi 5 + USB optical drive + screen appliance that behaves like an old-fashioned
+CD player, but plays to a Sonos speaker instead of built-in speakers, controlled via a REST
+API (`play`/`pause`/`stop`/skip forward/skip backward). See [README.md](README.md) for
+hardware, full CLI config, and the REST API table.
 
 ## Commands
 
