@@ -182,7 +182,10 @@ def test_prerip_and_gapless_auto_advance():
 
     # Sonos reports STOPPED -- our single-track URI ran out -- should
     # auto-advance and reuse the pre-ripped session rather than starting
-    # a fresh rip.
+    # a fresh rip. Two consecutive STOPPED polls are required (see
+    # test_single_stopped_report_does_not_auto_advance) so a real
+    # end-of-track needs two calls here, not one.
+    player.on_sonos_state("STOPPED")
     player.on_sonos_state("STOPPED")
 
     assert player.status()["current_track_number"] == 2
@@ -198,9 +201,40 @@ def test_auto_advance_stops_at_end_of_disc():
     assert player.status()["current_track_number"] == 2
 
     player.on_sonos_state("STOPPED")
+    player.on_sonos_state("STOPPED")
 
     assert player.status()["state"] == "stopped"
     assert player.status()["current_track_number"] is None
+
+
+def test_single_stopped_report_does_not_auto_advance():
+    # Sonos can report one spurious STOPPED tick right after a fresh
+    # play_uri() while it's still spinning up (a UPnP handshake blip, not
+    # real end-of-track) -- a single report must not skip the track.
+    player, sonos = make_player()
+    player.set_disc(make_toc(3), None)
+    player.play()
+    sonos.calls.clear()
+
+    player.on_sonos_state("STOPPED")
+
+    assert player.status()["current_track_number"] == 1
+    assert player.status()["state"] == "playing"
+    assert sonos.calls == []
+
+
+def test_stopped_report_followed_by_playing_resets_debounce():
+    player, sonos = make_player()
+    player.set_disc(make_toc(3), None)
+    player.play()
+
+    player.on_sonos_state("STOPPED")
+    player.on_sonos_state("PLAYING")  # blip resolved -- not a real stop
+    sonos.calls.clear()
+    player.on_sonos_state("STOPPED")  # only the first of a fresh pair
+
+    assert player.status()["current_track_number"] == 1
+    assert sonos.calls == []
 
 
 def test_eject_while_stopped_opens_tray_without_touching_sonos():
@@ -228,6 +262,10 @@ def test_eject_while_playing_stops_first_then_opens_tray(fake_eject_tray):
         "state": "stopped",
         "has_disc": False,
         "current_track_number": None,
+        "elapsed_seconds": 0.0,
+        "track_duration_seconds": None,
+        "first_track": None,
+        "last_track": None,
         "disc": None,
     }
     assert fake_eject_tray == ["/dev/fake-cd"]
@@ -251,3 +289,48 @@ def test_sonos_paused_event_updates_state_without_calling_pause():
 
     assert player.status()["state"] == "paused"
     assert sonos.calls == []  # learned, not re-issued
+
+
+def test_play_sets_track_duration_and_resets_elapsed():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+
+    player.play()
+
+    status = player.status()
+    assert status["track_duration_seconds"] == pytest.approx(1000 / 75)
+    assert status["elapsed_seconds"] == 0.0
+
+
+def test_on_sonos_position_updates_elapsed_seconds():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+
+    player.on_sonos_position(5.5)
+
+    assert player.status()["elapsed_seconds"] == 5.5
+
+
+def test_skip_resets_elapsed_seconds():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(3), None)
+    player.play()
+    player.on_sonos_position(9.0)
+
+    player.skip_forward()
+
+    assert player.status()["elapsed_seconds"] == 0.0
+
+
+def test_stop_clears_elapsed_and_duration():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.on_sonos_position(5.5)
+
+    player.stop()
+
+    status = player.status()
+    assert status["elapsed_seconds"] == 0.0
+    assert status["track_duration_seconds"] is None

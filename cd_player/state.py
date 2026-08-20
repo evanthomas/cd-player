@@ -40,7 +40,18 @@ class PlayerStateMachine:
         self._toc: DiscToc | None = None
         self._metadata: DiscMetadata | None = None
         self._current_track_number: int | None = None
+        self._current_track_duration_seconds: float | None = None
+        # Only Sonos knows actual playback position (audio is streamed
+        # live, not played locally) -- updated by SonosPoller.
+        self._elapsed_seconds: float = 0.0
         self._current_session: RipSession | None = None
+        # Sonos can report a spurious single STOPPED tick right after
+        # SetAVTransportURI+Play while a fresh URI is still spinning up --
+        # a known UPnP handshake flake, not real end-of-track. Requiring
+        # two consecutive STOPPED polls before acting filters that out
+        # (a genuine end-of-track keeps reporting STOPPED on the next
+        # poll too; a transient blip flips back to PLAYING).
+        self._pending_stop_confirmations = 0
 
         # One track ripped ahead of playback, so auto-advance at end of
         # track is gapless. Only ever populated once the current track's
@@ -64,7 +75,7 @@ class PlayerStateMachine:
             self._teardown_all_sessions()
             self._toc = toc
             self._metadata = metadata
-            self._current_track_number = None
+            self._reset_playback_position()
             self._state = PlayerState.STOPPED
 
     # -- REST-triggered commands -------------------------------------------
@@ -96,7 +107,7 @@ class PlayerStateMachine:
                 return
             self._sonos.stop()
             self._teardown_all_sessions()
-            self._current_track_number = None
+            self._reset_playback_position()
             self._state = PlayerState.STOPPED
 
     def eject(self) -> None:
@@ -113,7 +124,7 @@ class PlayerStateMachine:
             self._teardown_all_sessions()
             self._toc = None
             self._metadata = None
-            self._current_track_number = None
+            self._reset_playback_position()
             self._state = PlayerState.STOPPED
             eject_tray(self._config.cd_device_path)
 
@@ -131,6 +142,14 @@ class PlayerStateMachine:
                 "state": self._state.value,
                 "has_disc": self._toc is not None,
                 "current_track_number": self._current_track_number,
+                "elapsed_seconds": self._elapsed_seconds,
+                "track_duration_seconds": self._current_track_duration_seconds,
+                # Track bounds come from the physical TOC, not disc metadata, so
+                # they're available even when MusicBrainz has no match -- lets
+                # clients (e.g. cd-player-ui) disable skip at disc boundaries
+                # without needing metadata to have resolved.
+                "first_track": None if self._toc is None else self._toc.first_track,
+                "last_track": None if self._toc is None else self._toc.last_track,
                 "disc": None
                 if self._metadata is None
                 else {
@@ -154,13 +173,25 @@ class PlayerStateMachine:
             if self._toc is None:
                 return
             if sonos_state == "PLAYING":
+                self._pending_stop_confirmations = 0
                 self._state = PlayerState.PLAYING
             elif sonos_state == "PAUSED_PLAYBACK":
+                self._pending_stop_confirmations = 0
                 if self._state == PlayerState.PLAYING:
                     self._state = PlayerState.PAUSED
             elif sonos_state == "STOPPED":
-                if self._state != PlayerState.STOPPED:
+                if self._state == PlayerState.STOPPED:
+                    return
+                self._pending_stop_confirmations += 1
+                if self._pending_stop_confirmations >= 2:
+                    self._pending_stop_confirmations = 0
                     self._on_stopped_externally()
+
+    def on_sonos_position(self, seconds: float) -> None:
+        """Elapsed position within the current track, polled from Sonos --
+        we only know a track's total length ourselves, from the TOC."""
+        with self._lock:
+            self._elapsed_seconds = seconds
 
     def maybe_start_prerip(self) -> None:
         """Called periodically by the Sonos poller. Once the current
@@ -196,7 +227,7 @@ class PlayerStateMachine:
             self._state = PlayerState.PLAYING
         else:
             self._teardown_all_sessions()
-            self._current_track_number = None
+            self._reset_playback_position()
             self._state = PlayerState.STOPPED
 
     def _skip(self, direction: int) -> None:
@@ -239,11 +270,14 @@ class PlayerStateMachine:
 
         self._current_session = session
         self._current_track_number = track_number
+        duration_seconds = session.track.length_sectors / CDDA_SECTORS_PER_SECOND
+        self._current_track_duration_seconds = duration_seconds
+        self._elapsed_seconds = 0.0
         url = f"{self._config.stream_base_url}/stream/{session.session_id}.wav"
         self._sonos.play_uri(
             url,
             title=self._track_title(track_number),
-            duration_seconds=session.track.length_sectors / CDDA_SECTORS_PER_SECOND,
+            duration_seconds=duration_seconds,
         )
 
     def _track_title(self, track_number: int) -> str:
@@ -284,3 +318,8 @@ class PlayerStateMachine:
     def _teardown_all_sessions(self) -> None:
         self._teardown_current_session()
         self._teardown_next_session()
+
+    def _reset_playback_position(self) -> None:
+        self._current_track_number = None
+        self._current_track_duration_seconds = None
+        self._elapsed_seconds = 0.0

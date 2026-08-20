@@ -15,6 +15,13 @@ def _format_duration(seconds: float) -> str:
     return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
+def _parse_duration(value: str) -> float:
+    """Inverse of _format_duration -- SoCo reports elapsed/total position
+    as 'H:MM:SS' strings (e.g. from GetPositionInfo)."""
+    hours, minutes, seconds = value.split(":")
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
 def _build_track_metadata(title: str, uri: str, duration_seconds: float) -> str:
     """DIDL-Lite for a normal seekable track.
 
@@ -71,3 +78,9 @@ class SonosController:
     def get_transport_state(self) -> str:
         """One of 'PLAYING', 'PAUSED_PLAYBACK', 'STOPPED', 'TRANSITIONING', ..."""
         return self._device.get_current_transport_info()["current_transport_state"]
+
+    def get_position_seconds(self) -> float:
+        """Elapsed playback position within the current track, per Sonos --
+        we only know the track's total length ourselves (from the disc
+        TOC); how far into it Sonos actually is requires asking Sonos."""
+        return _parse_duration(self._device.get_current_track_info()["position"])

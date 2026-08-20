@@ -27,11 +27,20 @@ Audio extraction shells out to `cdparanoia`, and disc identification uses `libdi
 sudo apt install cdparanoia libdiscid0
 ```
 
+The touchscreen UI (`cd-player-ui`, see below) needs `pygame` built against the *system*
+SDL2 -- the prebuilt PyPI wheel bundles its own SDL2 without KMSDRM support, which is what
+lets it render straight to the framebuffer with no X11/Wayland compositor running:
+
+```bash
+sudo apt install python3-dev libsdl2-dev libsdl2-ttf-dev libsdl2-image-dev libsdl2-mixer-dev
+```
+
 ## Installation
 
 ```bash
 python3 -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install --no-binary pygame -e ".[ui]"   # only if using the touchscreen UI
 ```
 
 ## Configuration
@@ -75,6 +84,32 @@ mkdir -p ~/.local/share/cd-player/artwork
 Inserting a disc only triggers identification (TOC read + metadata lookup) — it never
 starts playback on its own. Playback always starts from an explicit `play` command.
 
+## Touchscreen UI
+
+`cd-player-ui` is a separate process that renders a landscape touch UI on the Pi's screen
+(720x1280 native/portrait on the Pi Touch Display 2, rendered landscape and rotated in
+software) directly to the DRM/KMS framebuffer -- no X11 or Wayland, so nothing to wait on
+at boot. It's a REST client like any other: it polls `GET /status` and calls the same
+`POST` endpoints as curl, so it can be started, stopped, or crash independently of
+`cd-player` itself.
+
+```bash
+.venv/bin/cd-player-ui --api-base-url http://localhost:8080
+```
+
+| Argument | Default | Purpose |
+|---|---|---|
+| `--api-base-url` | `http://localhost:8080` | Base URL of the `cd-player` REST API |
+| `--rotate` | `90` | Degrees (counterclockwise) to rotate the rendered UI onto the physical panel. `90` is correct for the Pi Touch Display 2's native portrait orientation; verify against the real screen if using different hardware -- taps landing on the wrong button means this needs adjusting |
+| `--poll-interval` | `1.0` | Seconds between `/status` polls |
+
+Behavior: black screen with no disc loaded; once a disc is loaded, shows cover art,
+title/artist/track with elapsed/total time (filled in asynchronously as `/status` picks up
+MusicBrainz/Cover Art Archive data and Sonos's playback position), and
+skip-back/play/pause/skip-forward/eject buttons -- each dimmed and inert whenever it
+wouldn't do anything (e.g. play while already playing, skip-forward on the last track).
+Icons are drawn procedurally (no image assets to load).
+
 ## REST API
 
 All control endpoints are `POST` and return the current player status as JSON.
@@ -87,7 +122,7 @@ All control endpoints are `POST` and return the current player status as JSON.
 | `POST /skip-forward` | Moves to the next track. No-op at the last track. |
 | `POST /skip-backward` | Moves to the previous track. No-op at the first track. |
 | `POST /eject` | Stops playback (if any) and opens the tray. |
-| `GET /status` | Current player state, track number, and disc metadata. |
+| `GET /status` | Current player state, track number/bounds, elapsed/total track time, and disc metadata. |
 
 ```bash
 curl -X POST http://localhost:8080/play
@@ -105,8 +140,12 @@ Sonos app itself stays in sync with `/status`.
 
 The suite covers disc TOC math, WAV header construction, the player state machine
 (including track-boundary no-ops, gapless auto-advance, and staying in sync with
-externally-triggered Sonos state changes), and the Range-request streaming server. None of
-it needs real hardware.
+externally-triggered Sonos state changes), the Range-request streaming server, and the
+touchscreen UI's pure logic (status-to-view-model mapping, button layout, and the
+portrait/landscape rotation geometry). None of it needs real hardware, and none of it
+needs `pygame` installed -- the UI's rendering/touch-event code (`cd_player/ui/app.py`,
+`renderer.py`, `icons.py`) is pygame-dependent and, like `disc/ripper.py` and
+`streaming/stream_server.py`, is verified against the real screen instead.
 
 ## Known limitations
 
@@ -119,6 +158,9 @@ it needs real hardware.
   starts.
 - If the optical drive can't keep up with playback (e.g. a heavily scratched disc), Sonos
   may stall waiting on the stream; this isn't actively handled.
+- Restarting `cd-player` while Sonos is still playing from a previous run can leave
+  `/status` reporting `"state": "playing"` with no track number, since the new process has
+  no memory of what the old one started. `POST /stop` recovers cleanly.
 
 ## License
 

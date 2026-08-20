@@ -19,9 +19,13 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+ui = [
+    "pygame>=2.6",
+]
 
 [project.scripts]
 cd-player = "cd_player.main:main"
+cd-player-ui = "cd_player.ui.app:main"
 
 [build-system]
 requires = ["setuptools>=68"]
