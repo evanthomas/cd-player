@@ -52,6 +52,13 @@ def fake_rip_session(monkeypatch):
     monkeypatch.setattr("cd_player.state.RipSession", FakeRipSession)
 
 
+@pytest.fixture(autouse=True)
+def fake_eject_tray(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr("cd_player.state.eject_tray", lambda device_path: calls.append(device_path))
+    return calls
+
+
 def make_toc(num_tracks=3) -> DiscToc:
     tracks = [
         TrackInfo(number=i, offset_sectors=i * 1000, length_sectors=1000)
@@ -194,6 +201,44 @@ def test_auto_advance_stops_at_end_of_disc():
 
     assert player.status()["state"] == "stopped"
     assert player.status()["current_track_number"] is None
+
+
+def test_eject_while_stopped_opens_tray_without_touching_sonos():
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+
+    player.eject()
+
+    assert player.status()["has_disc"] is False
+    assert player.status()["state"] == "stopped"
+    assert sonos.calls == []
+
+
+def test_eject_while_playing_stops_first_then_opens_tray(fake_eject_tray):
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    session = player._current_session
+
+    player.eject()
+
+    assert sonos.calls[-1] == ("stop",)
+    assert session.stopped
+    assert player.status() == {
+        "state": "stopped",
+        "has_disc": False,
+        "current_track_number": None,
+        "disc": None,
+    }
+    assert fake_eject_tray == ["/dev/fake-cd"]
+
+
+def test_eject_with_no_disc_still_opens_tray(fake_eject_tray):
+    player, _sonos = make_player()
+
+    player.eject()
+
+    assert fake_eject_tray == ["/dev/fake-cd"]
 
 
 def test_sonos_paused_event_updates_state_without_calling_pause():

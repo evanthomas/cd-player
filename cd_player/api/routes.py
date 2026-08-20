@@ -36,6 +36,11 @@ def build_api_blueprint(player: PlayerStateMachine) -> Blueprint:
         player.skip_backward()
         return jsonify(status=player.status())
 
+    @bp.route("/eject", methods=["POST"])
+    def eject():
+        player.eject()
+        return jsonify(status=player.status())
+
     @bp.route("/status", methods=["GET"])
     def status():
         return jsonify(status=player.status())

@@ -14,6 +14,7 @@ import threading
 import uuid
 
 from cd_player.config import Config
+from cd_player.disc.drive import eject_tray
 from cd_player.disc.ripper import RipSession, RipSessionRegistry
 from cd_player.disc.toc import CDDA_SECTORS_PER_SECOND, DiscToc
 from cd_player.metadata.cache import DiscMetadata
@@ -97,6 +98,24 @@ class PlayerStateMachine:
             self._teardown_all_sessions()
             self._current_track_number = None
             self._state = PlayerState.STOPPED
+
+    def eject(self) -> None:
+        """Stop playback (if any) and open the tray. Clears disc state here
+        rather than waiting for DiscMonitor's udev-driven `set_disc(None,
+        None)` -- that event lands on a separate thread with no latency
+        guarantee, and a client polling /status right after this call
+        should already see `has_disc: false`. The later udev event is then
+        a harmless no-op against already-cleared state.
+        """
+        with self._lock:
+            if self._state != PlayerState.STOPPED:
+                self._sonos.stop()
+            self._teardown_all_sessions()
+            self._toc = None
+            self._metadata = None
+            self._current_track_number = None
+            self._state = PlayerState.STOPPED
+            eject_tray(self._config.cd_device_path)
 
     def skip_forward(self) -> None:
         with self._lock:

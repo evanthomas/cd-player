@@ -86,6 +86,7 @@ All control endpoints are `POST` and return the current player status as JSON.
 | `POST /stop` | Stops playback and disconnects (clears the speaker's loaded source). |
 | `POST /skip-forward` | Moves to the next track. No-op at the last track. |
 | `POST /skip-backward` | Moves to the previous track. No-op at the first track. |
+| `POST /eject` | Stops playback (if any) and opens the tray. |
 | `GET /status` | Current player state, track number, and disc metadata. |
 
 ```bash
