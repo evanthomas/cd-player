@@ -118,10 +118,12 @@ starts.
 - **The Pi Touch Display 2 reports a native portrait DRM mode** (`720x1280`), so the landscape
   UI is rendered onto a separate canvas and rotated onto the real display surface via
   `pygame.transform.rotate`, with `ui/rotation.py` doing the matching inverse transform on
-  touch coordinates. `--rotate 90` (`ui/app.py`'s default) was confirmed correct against the
-  real screen and touch digitizer — don't assume this generalizes to other panels/mountings
-  without re-verifying, since it depends on the physical mounting orientation, not just the
-  reported DRM mode.
+  touch coordinates. The correct `--rotate` value depends on the physical mounting orientation,
+  not just the reported DRM mode, so it's changed before: originally `90`, confirmed correct
+  against the real screen and touch digitizer; after the display was remounted in a case
+  (2026-08-27) the panel sits 180° from before, so `ui/app.py`'s default was updated to `270`
+  and re-confirmed (rotation upright, taps landing on the right buttons). Don't assume the
+  current default generalizes to other panels/mountings without re-verifying on real hardware.
 - **A fresh `play_uri()` call from a STOPPED baseline can make Sonos report a single spurious
   `STOPPED` tick before settling into `PLAYING`** — a transient blip in the
   `SetAVTransportURI`+`Play` handshake, confirmed via `GetPositionInfo`/transport-state

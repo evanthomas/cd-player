@@ -28,11 +28,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--rotate",
         type=int,
         choices=(0, 90, 180, 270),
-        default=90,
+        default=270,
         help=(
             "Degrees to rotate the rendered landscape UI onto the physical panel "
-            "(counterclockwise, pygame's convention). The Pi Touch Display 2 reports "
-            "a native portrait mode, so this defaults to 90 -- verify against the "
+            "(counterclockwise, pygame's convention). Depends on the physical mounting "
+            "orientation, not just the panel's reported DRM mode -- verify against the "
             "real screen and adjust if taps land on the wrong button (default: %(default)s)"
         ),
     )

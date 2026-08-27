@@ -100,7 +100,7 @@ at boot. It's a REST client like any other: it polls `GET /status` and calls the
 | Argument | Default | Purpose |
 |---|---|---|
 | `--api-base-url` | `http://localhost:8080` | Base URL of the `cd-player` REST API |
-| `--rotate` | `90` | Degrees (counterclockwise) to rotate the rendered UI onto the physical panel. `90` is correct for the Pi Touch Display 2's native portrait orientation; verify against the real screen if using different hardware -- taps landing on the wrong button means this needs adjusting |
+| `--rotate` | `270` | Degrees (counterclockwise) to rotate the rendered UI onto the physical panel. Depends on the physical mounting orientation, not just the panel's native portrait mode; verify against the real screen -- taps landing on the wrong button means this needs adjusting |
 | `--poll-interval` | `1.0` | Seconds between `/status` polls |
 
 Behavior: black screen with no disc loaded; once a disc is loaded, shows cover art,
