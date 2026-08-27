@@ -8,8 +8,8 @@ import logging
 
 import pygame
 
-from cd_player.ui.icons import DRAW_FUNCS
-from cd_player.ui.layout import Layout
+from cd_player.ui.icons import DRAW_FUNCS, draw_back
+from cd_player.ui.layout import Layout, SettingsLayout
 from cd_player.ui.view_model import ViewState, is_button_enabled
 
 logger = logging.getLogger(__name__)
@@ -106,3 +106,73 @@ class Renderer:
                 bg, icon_color = BUTTON_BG, WHITE
             pygame.draw.rect(canvas, bg, rect, border_radius=16)
             DRAW_FUNCS[name](canvas, rect, icon_color)
+
+    def render_settings(
+        self,
+        canvas: pygame.Surface,
+        view: ViewState,
+        layout: SettingsLayout,
+        available_speakers: list[str] | None,
+        scanning: bool,
+    ) -> None:
+        canvas.fill(BLACK)
+        pygame.draw.rect(canvas, BUTTON_BG, layout.back_rect, border_radius=16)
+        draw_back(canvas, layout.back_rect, WHITE)
+        self._draw_speaker_rows(canvas, layout, view, available_speakers, scanning)
+        self._draw_volume_slider(canvas, layout, view)
+
+    def _draw_speaker_rows(
+        self,
+        canvas: pygame.Surface,
+        layout: SettingsLayout,
+        view: ViewState,
+        available_speakers: list[str] | None,
+        scanning: bool,
+    ) -> None:
+        if scanning or available_speakers is None:
+            self._draw_centered_message(canvas, layout, "Scanning for speakers...")
+            return
+        if not available_speakers:
+            self._draw_centered_message(canvas, layout, "No speakers found")
+            return
+
+        selected = set(view.selected_speaker_names)
+        for name, (checkbox_rect, label_rect) in zip(available_speakers, layout.speaker_rows):
+            self._draw_checkbox(canvas, checkbox_rect, checked=name in selected)
+            label = self._track_font.render(name, True, WHITE)
+            _, ly, _, lh = label_rect
+            canvas.blit(label, (label_rect[0], ly + (lh - label.get_height()) // 2))
+
+    def _draw_checkbox(self, canvas: pygame.Surface, rect, checked: bool) -> None:
+        pygame.draw.rect(canvas, WHITE, rect, width=3, border_radius=6)
+        if checked:
+            x, y, w, h = rect
+            pad = max(4, w // 5)
+            pygame.draw.rect(
+                canvas, WHITE, (x + pad, y + pad, w - 2 * pad, h - 2 * pad), border_radius=4
+            )
+
+    def _draw_volume_slider(
+        self, canvas: pygame.Surface, layout: SettingsLayout, view: ViewState
+    ) -> None:
+        x, y, w, h = layout.volume_slider_rect
+        pygame.draw.rect(canvas, BUTTON_BG, layout.volume_slider_rect, border_radius=h // 2)
+        level = view.volume if view.volume is not None else 0
+        fill_w = int(w * level / 100)
+        if fill_w > 0:
+            pygame.draw.rect(canvas, WHITE, (x, y, fill_w, h), border_radius=h // 2)
+        label_text = "Volume: --" if view.volume is None else f"Volume: {view.volume}"
+        label = self._artist_font.render(label_text, True, DIM)
+        canvas.blit(label, (x, y - label.get_height() - 8))
+
+    def _draw_centered_message(self, canvas: pygame.Surface, layout: SettingsLayout, text: str) -> None:
+        # Anchored to back_rect/volume_slider_rect rather than speaker_rows,
+        # since this draws precisely when speaker_rows may be empty (still
+        # scanning, or genuinely zero speakers found).
+        area_x = layout.back_rect[0]
+        area_top = layout.back_rect[1] + layout.back_rect[3]
+        area_bottom = layout.volume_slider_rect[1]
+        message = self._track_font.render(text, True, DIM)
+        canvas.blit(
+            message, (area_x, area_top + (area_bottom - area_top - message.get_height()) // 2)
+        )

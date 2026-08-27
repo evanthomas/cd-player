@@ -31,20 +31,74 @@ class FakeRipSession:
 
 
 class FakeSonosController:
+    """Mirrors the real SonosController's group semantics (sticky
+    coordinator, empty-selection guard) with plain name-list bookkeeping --
+    no network -- so tests exercise the same observable policy as
+    production, not canned return values."""
+
+    _DISCOVERABLE = ("Study", "Kitchen", "Bedroom")
+
     def __init__(self):
         self.calls: list[tuple] = []
+        self._selected: list[str] = ["Study"]
+        self._volume: int | None = None
+
+    def _require_selection(self):
+        if not self._selected:
+            raise RuntimeError("no speakers selected")
 
     def play_uri(self, url, title="", duration_seconds=0.0):
+        self._require_selection()
         self.calls.append(("play_uri", url))
 
     def play(self):
+        self._require_selection()
         self.calls.append(("play",))
 
     def pause(self):
+        self._require_selection()
         self.calls.append(("pause",))
 
     def stop(self):
+        self._require_selection()
         self.calls.append(("stop",))
+
+    def has_selection(self) -> bool:
+        return bool(self._selected)
+
+    def get_selected_speaker_names(self) -> list[str]:
+        return list(self._selected)
+
+    def list_available_speakers(self) -> list[str]:
+        return list(self._DISCOVERABLE)
+
+    def set_selected_speakers(self, names: list[str]) -> bool:
+        resolved = sorted({n for n in names if n in self._DISCOVERABLE})
+        old_coordinator = self._selected[0] if self._selected else None
+        if not resolved:
+            self._selected = []
+            self.calls.append(("set_selected_speakers", []))
+            return old_coordinator is not None
+        if old_coordinator in resolved:
+            new_coordinator = old_coordinator
+        else:
+            new_coordinator = resolved[0]
+        coordinator_changed = new_coordinator != old_coordinator
+        self._selected = [new_coordinator] + [n for n in resolved if n != new_coordinator]
+        self.calls.append(("set_selected_speakers", list(self._selected)))
+        return coordinator_changed
+
+    def get_volume(self) -> int | None:
+        return self._volume if self._selected else None
+
+    def set_volume(self, level: int) -> None:
+        self._require_selection()
+        self._volume = level
+        self.calls.append(("set_volume", level))
+
+    def seek(self, seconds: float) -> None:
+        self._require_selection()
+        self.calls.append(("seek", seconds))
 
 
 @pytest.fixture(autouse=True)
@@ -266,6 +320,8 @@ def test_eject_while_playing_stops_first_then_opens_tray(fake_eject_tray):
         "track_duration_seconds": None,
         "first_track": None,
         "last_track": None,
+        "selected_speakers": ["Study"],
+        "volume": None,
         "disc": None,
     }
     assert fake_eject_tray == ["/dev/fake-cd"]
@@ -334,3 +390,125 @@ def test_stop_clears_elapsed_and_duration():
     status = player.status()
     assert status["elapsed_seconds"] == 0.0
     assert status["track_duration_seconds"] is None
+
+
+# -- multi-speaker selection and volume --------------------------------------
+#
+# FakeSonosController mirrors the real SonosController's group semantics
+# (sticky coordinator, empty-selection guard) but NOT real Sonos hardware
+# behavior. Per CLAUDE.md, actual grouping/seek/pause-ordering and whether
+# unjoin() alone silences a dropped speaker (vs needing the same
+# SetAVTransportURI("") clear as stop()) must be verified on a real
+# multi-speaker Sonos setup regardless of these tests passing.
+
+
+def test_selecting_additional_speaker_while_stopped_does_not_reissue():
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+
+    player.set_selected_speakers(["Study", "Kitchen"])
+
+    assert sonos.get_selected_speaker_names() == ["Study", "Kitchen"]
+    assert [c[0] for c in sonos.calls] == ["set_selected_speakers"]
+
+
+def test_deselecting_current_coordinator_while_playing_reissues_and_seeks():
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.on_sonos_position(12.5)
+    sonos.calls.clear()
+
+    player.set_selected_speakers(["Kitchen"])
+
+    assert sonos.get_selected_speaker_names() == ["Kitchen"]
+    assert player.status()["state"] == "playing"
+    names = [c[0] for c in sonos.calls]
+    assert "play_uri" in names
+    assert ("seek", 12.5) in sonos.calls
+    assert "pause" not in names
+
+
+def test_deselecting_current_coordinator_while_paused_reissues_and_repauses():
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.pause()
+    sonos.calls.clear()
+
+    player.set_selected_speakers(["Kitchen"])
+
+    assert player.status()["state"] == "paused"
+    names = [c[0] for c in sonos.calls]
+    assert "play_uri" in names
+    assert "pause" in names
+    assert names.index("play_uri") < names.index("pause") < names.index("seek")
+
+
+def test_selecting_zero_speakers_while_playing_acts_like_stop():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    session = player._current_session
+
+    player.set_selected_speakers([])
+
+    assert player.status()["state"] == "stopped"
+    assert player.status()["current_track_number"] is None
+    assert session.stopped
+
+
+def test_play_with_zero_speakers_selected_raises():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.set_selected_speakers([])
+
+    with pytest.raises(RuntimeError):
+        player.play()
+
+
+def test_on_sonos_state_ignored_when_no_selection():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.set_selected_speakers([])
+    assert player.status()["state"] == "stopped"
+
+    player.on_sonos_state("PLAYING")
+
+    assert player.status()["state"] == "stopped"
+
+
+def test_volume_passthrough():
+    player, sonos = make_player()
+
+    player.set_volume(42)
+
+    assert ("set_volume", 42) in sonos.calls
+    assert player.get_volume() is None  # not yet polled/cached
+
+    player.on_sonos_volume(42)
+
+    assert player.get_volume() == 42
+
+
+def test_selecting_zero_speakers_clears_cached_volume():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.on_sonos_volume(42)
+    assert player.get_volume() == 42
+
+    player.set_selected_speakers([])
+
+    assert player.get_volume() is None
+
+
+def test_status_includes_selected_speakers_and_volume():
+    player, _sonos = make_player()
+    player.on_sonos_volume(55)
+
+    status = player.status()
+
+    assert status["selected_speakers"] == ["Study"]
+    assert status["volume"] == 55

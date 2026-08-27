@@ -10,6 +10,11 @@ import requests
 
 
 class PlayerClient:
+    # Discovery and multi-speaker regrouping are inherently slower than a
+    # single UPnP call (soco's discover() alone can take several seconds) --
+    # give those two calls more room than the default per-call timeout.
+    _SPEAKERS_TIMEOUT = 8.0
+
     def __init__(self, base_url: str, timeout: float = 3.0):
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -34,6 +39,19 @@ class PlayerClient:
     def eject(self) -> None:
         self._post("/eject")
 
-    def _post(self, path: str) -> None:
-        resp = requests.post(f"{self._base_url}{path}", timeout=self._timeout)
+    def get_available_speakers(self) -> list[str]:
+        resp = requests.get(f"{self._base_url}/speakers", timeout=self._SPEAKERS_TIMEOUT)
+        resp.raise_for_status()
+        return resp.json()["available"]
+
+    def set_selected_speakers(self, names: list[str]) -> None:
+        self._post("/speakers", json={"names": names}, timeout=self._SPEAKERS_TIMEOUT)
+
+    def set_volume(self, level: int) -> None:
+        self._post("/volume", json={"volume": level})
+
+    def _post(self, path: str, json: dict | None = None, timeout: float | None = None) -> None:
+        resp = requests.post(
+            f"{self._base_url}{path}", json=json, timeout=timeout or self._timeout
+        )
         resp.raise_for_status()

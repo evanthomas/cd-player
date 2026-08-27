@@ -83,6 +83,22 @@ it via `soco.discovery.by_name()` at startup, which blocks on a network scan and
 the speaker isn't found — the speaker must be powered on and reachable before `cd-player`
 starts.
 
+`SonosController` manages a *group* of speakers playing in sync, not just one fixed device:
+`self._selected` is an ordered list of `soco.SoCo` objects where `self._selected[0]` is
+always the group coordinator (every transport/volume/seek call targets it; UPnP requires
+this — members just follow). The coordinator is deliberately "sticky" — `set_selected_speakers()`
+only picks a new one when the current coordinator is actually deselected — so adding or
+removing other speakers never disrupts ongoing playback with a needless handoff. Selection
+is runtime-mutable (via the touchscreen's settings screen / `POST /speakers`) but never
+persisted: `--speaker-name`'s speaker is always the sole starting selection on boot.
+`PlayerStateMachine.set_selected_speakers()` handles the harder case — the coordinator
+changing identity while a track is PLAYING/PAUSED — by reissuing `play_uri` to the new
+coordinator and `seek()`ing back to the last known position (best-effort; a seek failure is
+logged, not raised). `status()` never calls `SonosController.get_volume()` directly (it's a
+live, uncached UPnP round trip per SoCo's `ZoneGroup.volume`) — volume is polled by
+`SonosPoller` on its existing cadence and cached on the state machine, exactly like
+`_elapsed_seconds`, so the single most-called endpoint in the app stays 100% in-memory.
+
 ### Gotchas (found via real-hardware testing, not from reading Sonos/UPnP docs)
 
 - **Sonos infers content type from the URL's file extension.** An extensionless stream URL
@@ -154,7 +170,33 @@ starts.
   inconsistent `{"state": "playing", "current_track_number": null}`. Reproduced 2026-08-20:
   looked like "play starts on the wrong track" from `cd-player-ui` when it was really a
   leftover stream from an earlier dev-restart. `POST /stop` recovers cleanly. Not yet fixed;
-  `on_sonos_state()` needs to either ignore a learned PLAYING with no known track, or map it
-  back to a real track from Sonos's reported position/URI.
+  `on_sonos_state()` needs to either ignore a learned PLAYING with no known track, or map it back to a real track from Sonos's reported position/URI.
+- **Multi-speaker grouping was verified against 3 real Sonos speakers (2026-08-27)**:
+  hard-stop-before-unjoin does actually silence a dropped speaker (confirmed via direct
+  `soco` query — `STOPPED`, empty `CurrentURI`, standalone coordinator of itself); the
+  reissue → pause → seek sequence on a mid-track coordinator handoff preserves playback
+  position and resumes into the correct PLAYING/PAUSED state on the new coordinator, with no
+  spurious auto-advance. One real bug was found and fixed this way: `SonosPoller` read
+  `SonosController`'s selection state directly, unsynchronized with REST-triggered
+  `set_selected_speakers()` calls — fine for the old single fixed `self._device` (set once,
+  never reassigned), but a race once `self._selected` became runtime-mutable (a `/speakers`
+  POST landing between the poller's `has_selection()` check and its next call could raise
+  "no speakers selected" mid-poll, reproduced directly by rapid-toggling speakers while
+  playing). Fixed with a dedicated `threading.RLock()` inside `SonosController` itself,
+  independent of `PlayerStateMachine._lock`.
+- **The volume slider's on-screen fill lags behind a live drag by up to ~2.5s, and jumps
+  when speakers are toggled** (confirmed on real hardware, 2026-08-27; not yet fixed). Two
+  distinct causes: (1) `speaker.group.volume` is *derived* live across whichever speakers
+  are currently grouped, not something the app owns, so adding a speaker with a different
+  individual volume visibly shifts the reported group volume the moment membership changes
+  — this is real Sonos behavior, not a UI bug. (2) the rendered slider position reads
+  `ViewState.volume`, which only updates once `SonosPoller` re-polls the real coordinator
+  (every `--sonos-poll-interval`, default 1.5s) *and* `cd-player-ui`'s own `/status` poll
+  picks that up (every `--poll-interval`, default 1.0s) — `VolumeSender`'s throttled *send*
+  path works correctly (confirmed: dragging does change the real speaker's volume promptly),
+  but nothing feeds the locally-dragged value back into what's rendered while dragging is in
+  progress. Fixing (2) means rendering from a local optimistic value during an active drag,
+  falling back to the polled `ViewState.volume` on release — deliberately left as follow-up
+  UI polish rather than fixed alongside the initial feature.
 
 

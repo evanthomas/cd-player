@@ -184,3 +184,26 @@ def test_is_button_enabled_delegates_to_view_properties():
     assert is_button_enabled(view, "pause") == view.can_pause
     assert is_button_enabled(view, "skip_forward") == view.can_skip_forward
     assert is_button_enabled(view, "skip_backward") == view.can_skip_backward
+
+
+def test_settings_is_always_enabled():
+    assert is_button_enabled(view_state_from_status(_status("stopped", None)), "settings") is True
+    assert is_button_enabled(view_state_from_status(_status("playing", 1)), "settings") is True
+
+
+def test_selected_speakers_and_volume_map_from_status():
+    status = _status("playing", 1)
+    status["selected_speakers"] = ["Study", "Kitchen"]
+    status["volume"] = 37
+
+    view = view_state_from_status(status)
+
+    assert view.selected_speaker_names == ["Study", "Kitchen"]
+    assert view.volume == 37
+
+
+def test_selected_speakers_and_volume_default_when_missing():
+    view = view_state_from_status(_status("stopped", None))
+
+    assert view.selected_speaker_names == []
+    assert view.volume is None

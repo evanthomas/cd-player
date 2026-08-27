@@ -60,6 +60,12 @@ class PlayerStateMachine:
         self._next_track_number: int | None = None
         self._next_session: RipSession | None = None
 
+        # Cached from SonosPoller, like _elapsed_seconds -- group volume is
+        # a live UPnP round trip on the real speaker, so status() must never
+        # call SonosController.get_volume() directly (it's the single
+        # most-called path in the app).
+        self._volume: int | None = None
+
     # -- disc lifecycle ---------------------------------------------------
 
     def set_disc(self, toc: DiscToc | None, metadata: DiscMetadata | None) -> None:
@@ -136,6 +142,55 @@ class PlayerStateMachine:
         with self._lock:
             self._skip(-1)
 
+    def list_available_speakers(self) -> list[str]:
+        with self._lock:
+            return self._sonos.list_available_speakers()
+
+    def get_selected_speaker_names(self) -> list[str]:
+        with self._lock:
+            return self._sonos.get_selected_speaker_names()
+
+    def set_selected_speakers(self, names: list[str]) -> None:
+        with self._lock:
+            coordinator_changed = self._sonos.set_selected_speakers(names)
+            if not self._sonos.has_selection():
+                self._volume = None  # nothing left for SonosPoller to poll/cache
+                if self._state != PlayerState.STOPPED:
+                    self._teardown_all_sessions()
+                    self._reset_playback_position()
+                    self._state = PlayerState.STOPPED
+                return
+            if coordinator_changed and self._state in (PlayerState.PLAYING, PlayerState.PAUSED):
+                assert self._current_session is not None and self._current_track_number is not None
+                # A fresh play_uri can trigger the documented spurious
+                # single-STOPPED-tick blip -- reset the debounce counter so
+                # that alone doesn't get mistaken for real end-of-track.
+                self._pending_stop_confirmations = 0
+                was_paused = self._state == PlayerState.PAUSED
+                url = (
+                    f"{self._config.stream_base_url}/stream/"
+                    f"{self._current_session.session_id}.wav"
+                )
+                self._sonos.play_uri(
+                    url,
+                    title=self._track_title(self._current_track_number),
+                    duration_seconds=self._current_track_duration_seconds,
+                )
+                if was_paused:
+                    self._sonos.pause()
+                try:
+                    self._sonos.seek(self._elapsed_seconds)
+                except Exception:
+                    logger.exception("seek after speaker-group change failed")
+
+    def get_volume(self) -> int | None:
+        with self._lock:
+            return self._volume
+
+    def set_volume(self, level: int) -> None:
+        with self._lock:
+            self._sonos.set_volume(level)
+
     def status(self) -> dict:
         with self._lock:
             return {
@@ -150,6 +205,8 @@ class PlayerStateMachine:
                 # without needing metadata to have resolved.
                 "first_track": None if self._toc is None else self._toc.first_track,
                 "last_track": None if self._toc is None else self._toc.last_track,
+                "selected_speakers": self._sonos.get_selected_speaker_names(),
+                "volume": self._volume,
                 "disc": None
                 if self._metadata is None
                 else {
@@ -170,7 +227,7 @@ class PlayerStateMachine:
         'PLAYING' / 'PAUSED_PLAYBACK' / 'STOPPED' / etc.
         """
         with self._lock:
-            if self._toc is None:
+            if self._toc is None or not self._sonos.has_selection():
                 return
             if sonos_state == "PLAYING":
                 self._pending_stop_confirmations = 0
@@ -191,7 +248,15 @@ class PlayerStateMachine:
         """Elapsed position within the current track, polled from Sonos --
         we only know a track's total length ourselves, from the TOC."""
         with self._lock:
+            if not self._sonos.has_selection():
+                return
             self._elapsed_seconds = seconds
+
+    def on_sonos_volume(self, value: int | None) -> None:
+        """Group volume, polled from Sonos -- cached here so status() never
+        has to make a live UPnP call on its own (see _volume)."""
+        with self._lock:
+            self._volume = value
 
     def maybe_start_prerip(self) -> None:
         """Called periodically by the Sonos poller. Once the current

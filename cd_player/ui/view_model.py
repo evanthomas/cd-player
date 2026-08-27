@@ -21,6 +21,8 @@ class ViewState:
     current_track_title: str | None
     first_track: int | None
     last_track: int | None
+    selected_speaker_names: list[str]
+    volume: int | None
 
     @property
     def can_play(self) -> bool:
@@ -102,4 +104,6 @@ def view_state_from_status(status: dict) -> ViewState:
         current_track_title=track_title,
         first_track=status.get("first_track"),
         last_track=status.get("last_track"),
+        selected_speaker_names=status.get("selected_speakers") or [],
+        volume=status.get("volume"),
     )

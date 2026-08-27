@@ -24,6 +24,8 @@ NO_DISC = ViewState(
     current_track_title=None,
     first_track=None,
     last_track=None,
+    selected_speaker_names=[],
+    volume=None,
 )
 
 

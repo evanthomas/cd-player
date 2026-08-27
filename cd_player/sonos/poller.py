@@ -35,10 +35,13 @@ class SonosPoller:
     def _run(self) -> None:
         while not self._stop_event.wait(self._interval):
             try:
+                if not self._sonos.has_selection():
+                    continue
                 state = self._sonos.get_transport_state()
                 self._player.on_sonos_state(state)
                 if state in ("PLAYING", "PAUSED_PLAYBACK"):
                     self._player.on_sonos_position(self._sonos.get_position_seconds())
+                self._player.on_sonos_volume(self._sonos.get_volume())
                 self._player.maybe_start_prerip()
             except Exception:
                 logger.exception("Sonos poll failed")

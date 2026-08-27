@@ -7,6 +7,8 @@ real screen.
 
 from __future__ import annotations
 
+import math
+
 import pygame
 
 from cd_player.ui.layout import Rect
@@ -85,10 +87,37 @@ def draw_eject(surface: pygame.Surface, rect: Rect, color) -> None:
     pygame.draw.rect(surface, color, (cx - half, bar_y, size, bar_h))
 
 
+def draw_back(surface: pygame.Surface, rect: Rect, color) -> None:
+    cx, cy, size = _inset_square(rect)
+    half = size / 2
+    points = [(cx + half, cy - half), (cx + half, cy + half), (cx - half, cy)]
+    pygame.draw.polygon(surface, color, points)
+
+
+def draw_settings(surface: pygame.Surface, rect: Rect, color) -> None:
+    cx, cy, size = _inset_square(rect)
+    outer_r = size / 2
+    inner_r = outer_r * 0.6
+    tooth_count = 8
+    half_width = (math.pi / tooth_count) * 0.4
+    for i in range(tooth_count):
+        angle = 2 * math.pi * i / tooth_count
+        a0, a1 = angle - half_width, angle + half_width
+        points = [
+            (cx + inner_r * math.cos(a0), cy + inner_r * math.sin(a0)),
+            (cx + outer_r * math.cos(a0), cy + outer_r * math.sin(a0)),
+            (cx + outer_r * math.cos(a1), cy + outer_r * math.sin(a1)),
+            (cx + inner_r * math.cos(a1), cy + inner_r * math.sin(a1)),
+        ]
+        pygame.draw.polygon(surface, color, points)
+    pygame.draw.circle(surface, color, (cx, cy), inner_r)
+
+
 DRAW_FUNCS = {
     "play": draw_play,
     "pause": draw_pause,
     "skip_forward": draw_skip_forward,
     "skip_backward": draw_skip_backward,
     "eject": draw_eject,
+    "settings": draw_settings,
 }

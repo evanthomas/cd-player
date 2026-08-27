@@ -8,11 +8,74 @@ ripping/streaming code in cd-player itself.
 from __future__ import annotations
 
 import argparse
+import enum
 import logging
 import os
 import threading
 
 logger = logging.getLogger(__name__)
+
+
+class Screen(enum.Enum):
+    NOW_PLAYING = "now_playing"
+    SETTINGS = "settings"
+
+
+class VolumeSender:
+    """Coalesces rapid volume-slider drag updates into throttled POST
+    /volume calls rather than sending on every drag event -- a drag can
+    generate ~30 events/sec, and each send takes PlayerStateMachine's lock
+    across a real UPnP call to the group coordinator (see CLAUDE.md's
+    rapid-command gotcha). Only the latest value during a drag is kept;
+    the value passed to end_drag() is always sent, even if nothing was
+    flushed during the drag itself.
+    """
+
+    def __init__(self, client, interval_seconds: float = 0.2):
+        self._client = client
+        self._interval = interval_seconds
+        self._lock = threading.Lock()
+        self._pending: int | None = None
+        self._last_sent: int | None = None
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start_drag(self) -> None:
+        self._stop_event.clear()
+        self._pending = None
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def update(self, level: int) -> None:
+        with self._lock:
+            self._pending = level
+
+    def end_drag(self, level: int) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=1)
+            self._thread = None
+        self._send_if_changed(level)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self._interval):
+            self._flush_pending()
+
+    def _flush_pending(self) -> None:
+        with self._lock:
+            level, self._pending = self._pending, None
+        if level is not None:
+            self._send_if_changed(level)
+
+    def _send_if_changed(self, level: int) -> None:
+        if level == self._last_sent:
+            return
+        try:
+            self._client.set_volume(level)
+        except Exception:
+            logger.exception("set_volume failed")
+        else:
+            self._last_sent = level
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -54,7 +117,13 @@ def main(argv: list[str] | None = None) -> None:
     import pygame
 
     from cd_player.ui.client import PlayerClient
-    from cd_player.ui.layout import button_at, compute_layout
+    from cd_player.ui.layout import (
+        button_at,
+        compute_layout,
+        compute_settings_layout,
+        settings_hit_at,
+        volume_from_slider_x,
+    )
     from cd_player.ui.poller import StatusPoller
     from cd_player.ui.renderer import Renderer
     from cd_player.ui.rotation import canvas_size_for_physical, physical_to_canvas
@@ -73,6 +142,7 @@ def main(argv: list[str] | None = None) -> None:
     client = PlayerClient(args.api_base_url)
     poller = StatusPoller(client, args.poll_interval)
     poller.start()
+    volume_sender = VolumeSender(client)
 
     renderer = Renderer()
     clock = pygame.time.Clock()
@@ -86,29 +156,100 @@ def main(argv: list[str] | None = None) -> None:
     }
 
     pressed_button: str | None = None
+    current_screen = Screen.NOW_PLAYING
+    available_speakers: list[str] | None = None
+    scanning = False
+    settings_layout = compute_settings_layout(canvas_size, 0)
+    dragging_slider = False
+
+    def run_in_background(fn) -> None:
+        # Off the render thread -- REST calls can take a while under lock
+        # contention (see CLAUDE.md Gotchas), and the render loop should
+        # never stall waiting on one.
+        threading.Thread(target=fn, daemon=True).start()
+
+    def enter_settings() -> None:
+        nonlocal current_screen, scanning
+        current_screen = Screen.SETTINGS
+        scanning = True
+
+        def fetch() -> None:
+            nonlocal available_speakers, scanning, settings_layout
+            try:
+                speakers = client.get_available_speakers()
+            except Exception:
+                logger.exception("fetching available speakers failed")
+                speakers = []
+            available_speakers = speakers
+            settings_layout = compute_settings_layout(canvas_size, len(speakers))
+            scanning = False
+
+        run_in_background(fetch)
+
+    def toggle_speaker(index: int) -> None:
+        if available_speakers is None or index >= len(available_speakers):
+            return
+        name = available_speakers[index]
+        desired = set(poller.view.selected_speaker_names)
+        if name in desired:
+            desired.discard(name)
+        else:
+            desired.add(name)
+        run_in_background(lambda: client.set_selected_speakers(sorted(desired)))
 
     def handle_press(physical_point: tuple[int, int]) -> None:
-        nonlocal pressed_button
+        nonlocal pressed_button, current_screen, dragging_slider
         canvas_point = physical_to_canvas(physical_point, canvas_size, args.rotate)
-        name = button_at(layout, canvas_point)
-        if name is None or not is_button_enabled(poller.view, name):
+
+        if current_screen == Screen.NOW_PLAYING:
+            name = button_at(layout, canvas_point)
+            if name == "settings":
+                enter_settings()
+                return
+            if name is None or not is_button_enabled(poller.view, name):
+                return
+            pressed_button = name
+
+            def run_action() -> None:
+                try:
+                    actions[name]()
+                except Exception:
+                    logger.exception("action %s failed", name)
+
+            # "Pressed" highlight should show up on the very next frame,
+            # not after the call returns.
+            run_in_background(run_action)
             return
-        pressed_button = name
 
-        def run_action() -> None:
-            try:
-                actions[name]()
-            except Exception:
-                logger.exception("action %s failed", name)
+        hit = settings_hit_at(settings_layout, canvas_point)
+        if hit is None:
+            return
+        kind, index = hit
+        if kind == "back":
+            current_screen = Screen.NOW_PLAYING
+        elif kind == "speaker_toggle":
+            toggle_speaker(index)
+        elif kind == "volume_slider":
+            dragging_slider = True
+            level = volume_from_slider_x(settings_layout.volume_slider_rect, canvas_point[0])
+            volume_sender.start_drag()
+            volume_sender.update(level)
 
-        # Off the render thread -- REST calls can take a while under lock
-        # contention (see CLAUDE.md Gotchas), and the "pressed" highlight
-        # should show up on the very next frame, not after the call returns.
-        threading.Thread(target=run_action, daemon=True).start()
+    def handle_motion(physical_point: tuple[int, int]) -> None:
+        if not dragging_slider:
+            return
+        canvas_point = physical_to_canvas(physical_point, canvas_size, args.rotate)
+        level = volume_from_slider_x(settings_layout.volume_slider_rect, canvas_point[0])
+        volume_sender.update(level)
 
-    def handle_release() -> None:
-        nonlocal pressed_button
+    def handle_release(physical_point: tuple[int, int]) -> None:
+        nonlocal pressed_button, dragging_slider
         pressed_button = None
+        if dragging_slider:
+            dragging_slider = False
+            canvas_point = physical_to_canvas(physical_point, canvas_size, args.rotate)
+            level = volume_from_slider_x(settings_layout.volume_slider_rect, canvas_point[0])
+            volume_sender.end_drag(level)
 
     running = True
     try:
@@ -121,15 +262,28 @@ def main(argv: list[str] | None = None) -> None:
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     handle_press(event.pos)
                 elif event.type == pygame.MOUSEBUTTONUP:
-                    handle_release()
+                    handle_release(event.pos)
+                elif event.type == pygame.MOUSEMOTION:
+                    handle_motion(event.pos)
                 elif event.type == pygame.FINGERDOWN:
                     handle_press(
                         (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
                     )
                 elif event.type == pygame.FINGERUP:
-                    handle_release()
+                    handle_release(
+                        (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
+                    )
+                elif event.type == pygame.FINGERMOTION:
+                    handle_motion(
+                        (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
+                    )
 
-            renderer.render(canvas, poller.view, layout, pressed_button)
+            if current_screen == Screen.NOW_PLAYING:
+                renderer.render(canvas, poller.view, layout, pressed_button)
+            else:
+                renderer.render_settings(
+                    canvas, poller.view, settings_layout, available_speakers, scanning
+                )
             rotated = pygame.transform.rotate(canvas, args.rotate)
             display.blit(rotated, (0, 0))
             pygame.display.flip()

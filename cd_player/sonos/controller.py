@@ -1,11 +1,22 @@
-"""Thin wrapper around SoCo, bound to one fixed, pre-configured speaker."""
+"""Thin wrapper around SoCo, managing a group of speakers playing in sync.
+
+The group always has one coordinator -- `self._selected[0]` -- which every
+transport/volume/seek call targets; any other selected speakers are joined
+to it as members. The coordinator is "sticky": it only changes identity when
+it's actually deselected, so adding/removing other speakers never disturbs
+ongoing playback.
+"""
 
 from __future__ import annotations
 
+import logging
+import threading
 from xml.sax.saxutils import escape
 
 import soco
-from soco.discovery import by_name
+from soco.discovery import by_name, discover
+
+logger = logging.getLogger(__name__)
 
 
 def _format_duration(seconds: float) -> str:
@@ -53,34 +64,162 @@ class SonosController:
             raise RuntimeError(
                 f"no Sonos speaker named {speaker_name!r} found on the network"
             )
-        self._device: soco.SoCo = device
+        device.unjoin()  # start every boot from a clean standalone baseline
+        self._selected: list[soco.SoCo] = [device]
+        self._names: dict[str, str] = {device.uid: device.player_name}
+        # SonosPoller reads has_selection()/get_transport_state()/etc. from
+        # its own thread, unsynchronized with REST-triggered
+        # set_selected_speakers() calls -- unlike the old single fixed
+        # self._device (set once, never reassigned), self._selected is now
+        # mutated at runtime, so every read/write of it must go through this
+        # lock or a selection change mid-poll can flip has_selection() out
+        # from under an in-flight read (observed directly: a poll tick's
+        # get_position_seconds() raised "no speakers selected" seconds after
+        # its own has_selection() check passed).
+        self._lock = threading.RLock()
 
-    def play_uri(self, url: str, title: str = "", duration_seconds: float = 0.0) -> None:
-        meta = _build_track_metadata(title, url, duration_seconds)
-        self._device.play_uri(url, meta=meta)
+    # -- speaker selection --------------------------------------------------
 
-    def play(self) -> None:
-        self._device.play()
+    def list_available_speakers(self) -> list[str]:
+        return sorted(z.player_name for z in (discover(timeout=4.0) or []))
 
-    def pause(self) -> None:
-        self._device.pause()
+    def get_selected_speaker_names(self) -> list[str]:
+        with self._lock:
+            return [self._names[s.uid] for s in self._selected]
 
-    def stop(self) -> None:
-        self._device.stop()
+    def has_selection(self) -> bool:
+        with self._lock:
+            return bool(self._selected)
+
+    def set_selected_speakers(self, names: list[str]) -> bool:
+        """Reform the group to exactly the speakers named in `names` (a name
+        that isn't currently discoverable is silently dropped). The
+        coordinator is "sticky": it stays `self._selected[0]` if that speaker
+        is still selected, and only otherwise picks the alphabetically-first
+        remaining speaker -- so adding/removing other speakers never forces
+        a handoff. Returns True iff the coordinator identity changed.
+        """
+        zones = {z.player_name: z for z in (discover(timeout=4.0) or [])}
+        seen: set[str] = set()
+        resolved: list[soco.SoCo] = []
+        for name in names:
+            zone = zones.get(name)
+            if zone is not None and zone.uid not in seen:
+                seen.add(zone.uid)
+                resolved.append(zone)
+        resolved.sort(key=lambda z: z.player_name)
+        resolved_uids = {z.uid for z in resolved}
+
+        with self._lock:
+            old_coordinator = self._selected[0] if self._selected else None
+            old_member_uids = {s.uid for s in self._selected[1:]}
+            currently_selected = list(self._selected)
+
+            # Hard-stop and unjoin every currently-selected speaker being
+            # fully dropped, before touching group topology -- otherwise a
+            # deselected speaker keeps playing the live stream forever
+            # (unjoin() alone only changes group membership, it doesn't
+            # silence anything, same as UPnP Stop alone not clearing
+            # CurrentURI -- see _hard_stop).
+            for speaker in currently_selected:
+                if speaker.uid not in resolved_uids:
+                    self._hard_stop(speaker)
+                    speaker.unjoin()
+
+            if not resolved:
+                self._selected = []
+                self._names = {}
+                return old_coordinator is not None
+
+            if old_coordinator is not None and old_coordinator.uid in resolved_uids:
+                new_coordinator = old_coordinator
+            else:
+                new_coordinator = resolved[0]
+            coordinator_changed = (
+                old_coordinator is None or new_coordinator.uid != old_coordinator.uid
+            )
+            if coordinator_changed:
+                new_coordinator.unjoin()  # must be standalone before others can join it
+
+            final: list[soco.SoCo] = [new_coordinator]
+            for member in resolved:
+                if member.uid == new_coordinator.uid:
+                    continue
+                if not coordinator_changed and member.uid in old_member_uids:
+                    final.append(member)  # already correctly joined -- no call needed
+                    continue
+                try:
+                    member.join(new_coordinator)
+                except Exception:
+                    logger.exception("failed to join %s to the group", member.player_name)
+                    continue
+                final.append(member)
+
+            self._selected = final
+            self._names = {z.uid: z.player_name for z in final}
+            return coordinator_changed
+
+    def _hard_stop(self, speaker: soco.SoCo) -> None:
+        speaker.stop()
         # UPnP Stop halts playback but leaves the last URI loaded, so the
         # Sonos app still shows our track as the current source even
         # though nothing is playing -- clearing CurrentURI is what makes
         # "stop" actually read as disconnected rather than just paused.
-        self._device.avTransport.SetAVTransportURI(
+        speaker.avTransport.SetAVTransportURI(
             [("InstanceID", 0), ("CurrentURI", ""), ("CurrentURIMetaData", "")]
         )
 
+    # -- volume ---------------------------------------------------------------
+
+    def get_volume(self) -> int | None:
+        with self._lock:
+            if not self._selected:
+                return None
+            coordinator = self._selected[0]
+        return coordinator.group.volume
+
+    def set_volume(self, level: int) -> None:
+        coordinator = self._require_coordinator()
+        coordinator.group.volume = level
+
+    def seek(self, seconds: float) -> None:
+        coordinator = self._require_coordinator()
+        coordinator.seek(position=_format_duration(seconds))
+
+    # -- transport (all target the group coordinator, self._selected[0]) ------
+
+    def play_uri(self, url: str, title: str = "", duration_seconds: float = 0.0) -> None:
+        coordinator = self._require_coordinator()
+        meta = _build_track_metadata(title, url, duration_seconds)
+        coordinator.play_uri(url, meta=meta)
+
+    def play(self) -> None:
+        self._require_coordinator().play()
+
+    def pause(self) -> None:
+        self._require_coordinator().pause()
+
+    def stop(self) -> None:
+        self._hard_stop(self._require_coordinator())
+
     def get_transport_state(self) -> str:
         """One of 'PLAYING', 'PAUSED_PLAYBACK', 'STOPPED', 'TRANSITIONING', ..."""
-        return self._device.get_current_transport_info()["current_transport_state"]
+        coordinator = self._require_coordinator()
+        return coordinator.get_current_transport_info()["current_transport_state"]
 
     def get_position_seconds(self) -> float:
         """Elapsed playback position within the current track, per Sonos --
         we only know the track's total length ourselves (from the disc
         TOC); how far into it Sonos actually is requires asking Sonos."""
-        return _parse_duration(self._device.get_current_track_info()["position"])
+        coordinator = self._require_coordinator()
+        return _parse_duration(coordinator.get_current_track_info()["position"])
+
+    def _require_coordinator(self) -> soco.SoCo:
+        # Snapshot the coordinator reference under the lock, then release it
+        # before the (possibly slow) UPnP call -- holding this lock only
+        # protects self._selected's own consistency, not the outgoing
+        # network call, so there's no reason to hold it across the latter.
+        with self._lock:
+            if not self._selected:
+                raise RuntimeError("no speakers selected")
+            return self._selected[0]

@@ -50,7 +50,7 @@ Run `cd-player --help` for the full list.
 
 | Argument | Required | Default | Purpose |
 |---|---|---|---|
-| `--speaker-name` | yes | — | Room/player name of the target Sonos speaker, as shown in the Sonos app (e.g. `Study`). Discovered on the network at startup |
+| `--speaker-name` | yes | — | Room/player name of the Sonos speaker selected at boot, as shown in the Sonos app (e.g. `Study`). Discovered on the network at startup. The touchscreen's settings screen can add/remove other speakers at runtime (grouped in sync); that selection resets to just this one speaker on every restart |
 | `--advertise-host` | yes | — | This Pi's LAN IP, reachable by the Sonos speaker (used to build stream URLs) |
 | `--device-path` | no | `/dev/disk/by-id/usb-cd0` | Path to the optical drive. Use a stable `/dev/disk/by-id/...` symlink, not `/dev/sr0`, since drive enumeration order isn't guaranteed |
 | `--db-path` | no | `/var/lib/cd-player/cache.db` | SQLite metadata cache (avoids re-querying MusicBrainz for a disc you've already seen) |
@@ -106,27 +106,40 @@ at boot. It's a REST client like any other: it polls `GET /status` and calls the
 Behavior: black screen with no disc loaded; once a disc is loaded, shows cover art,
 title/artist/track with elapsed/total time (filled in asynchronously as `/status` picks up
 MusicBrainz/Cover Art Archive data and Sonos's playback position), and
-skip-back/play/pause/skip-forward/eject buttons -- each dimmed and inert whenever it
-wouldn't do anything (e.g. play while already playing, skip-forward on the last track).
-Icons are drawn procedurally (no image assets to load).
+skip-back/play/pause/skip-forward/eject/settings buttons -- each of the playback buttons
+dimmed and inert whenever it wouldn't do anything (e.g. play while already playing,
+skip-forward on the last track). Icons are drawn procedurally (no image assets to load).
+
+The gear icon opens a settings screen listing every Sonos speaker autodiscovered on the
+LAN as a checkbox (checking more than one plays audio to all of them in sync, a normal
+Sonos group) and a volume slider controlling the group's volume. Selection is free -- any
+subset can be checked, including none -- and is not persisted: it always resets to just
+`--speaker-name`'s speaker on the next restart.
 
 ## REST API
 
-All control endpoints are `POST` and return the current player status as JSON.
+All control endpoints are `POST` and return the current player status as JSON. A
+`RuntimeError`-guarded, currently-invalid transition (e.g. `/play` with no disc loaded, or
+any speaker-dependent call with zero speakers selected) responds `409`; a genuine Sonos/UPnP
+failure (e.g. a speaker going offline mid-request) responds `502`.
 
 | Endpoint | Effect |
 |---|---|
-| `POST /play` | If stopped, connects to the speaker and plays from track 1. If paused, resumes. |
-| `POST /pause` | Pauses playback; stays connected to the speaker. |
+| `POST /play` | If stopped, connects to the speaker(s) and plays from track 1. If paused, resumes. |
+| `POST /pause` | Pauses playback; stays connected to the speaker(s). |
 | `POST /stop` | Stops playback and disconnects (clears the speaker's loaded source). |
 | `POST /skip-forward` | Moves to the next track. No-op at the last track. |
 | `POST /skip-backward` | Moves to the previous track. No-op at the first track. |
 | `POST /eject` | Stops playback (if any) and opens the tray. |
-| `GET /status` | Current player state, track number/bounds, elapsed/total track time, and disc metadata. |
+| `GET /status` | Current player state, track number/bounds, elapsed/total track time, disc metadata, selected speakers, and volume. |
+| `GET /speakers` | Every Sonos speaker autodiscovered on the LAN, `{"available": [...]}`. |
+| `POST /speakers` | Body `{"names": [...]}` -- reforms the playback group to exactly these speakers (grouped in sync; unknown names are silently dropped). |
+| `POST /volume` | Body `{"volume": 0-100}` -- sets the playback group's volume. |
 
 ```bash
 curl -X POST http://localhost:8080/play
 curl http://localhost:8080/status
+curl -X POST http://localhost:8080/speakers -H 'Content-Type: application/json' -d '{"names": ["Study", "Kitchen"]}'
 ```
 
 The player also polls the speaker's own transport state, so pausing or resuming from the
@@ -152,15 +165,19 @@ needs `pygame` installed -- the UI's rendering/touch-event code (`cd_player/ui/a
 - Track titles don't currently show up in the Sonos app itself (Sonos regenerates its own
   display title from the stream URL for ad-hoc HTTP sources rather than trusting the
   provided metadata). Full track/artist/album info is always available via `/status`.
-- A single, fixed Sonos speaker is supported, configured by room name and resolved via
-  network discovery at startup — there's no runtime speaker selection or multi-room
-  grouping, and the speaker must already be powered on and reachable when `cd-player`
-  starts.
+- The Sonos speaker set by `--speaker-name` must already be powered on and reachable when
+  `cd-player` starts (startup discovery is required for at least this one speaker); other
+  speakers can be added/removed at runtime via the settings screen, but that selection is
+  not persisted and always resets to just this one speaker on restart.
 - If the optical drive can't keep up with playback (e.g. a heavily scratched disc), Sonos
   may stall waiting on the stream; this isn't actively handled.
 - Restarting `cd-player` while Sonos is still playing from a previous run can leave
   `/status` reporting `"state": "playing"` with no track number, since the new process has
-  no memory of what the old one started. `POST /stop` recovers cleanly.
+  no memory of what the old one started. `POST /stop` recovers cleanly. If the previous run
+  had grouped multiple speakers together, restarting only cleans up the `--speaker-name`
+  speaker (`unjoin()`s it to a standalone baseline) -- any *other* speakers that were in that
+  group are not proactively silenced, and may keep playing a now-dead stream URL until
+  manually stopped from the Sonos app.
 
 ## License
 
