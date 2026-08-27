@@ -71,7 +71,16 @@ class DiscMonitor:
             logger.exception("failed to read TOC for %s", self._device_path)
             return
 
-        metadata = self._cache.get(disc_toc.disc_id)
+        try:
+            metadata = self._cache.get(disc_toc.disc_id)
+        except Exception:
+            # It's just a cache -- a read failure here (e.g. the DB file
+            # became corrupt mid-life) should fall through to a fresh
+            # network lookup, not take down disc detection for the rest of
+            # this process's life.
+            logger.exception("metadata cache read failed for %s", disc_toc.disc_id)
+            metadata = None
+
         if metadata is None:
             metadata = musicbrainz.lookup_disc(disc_toc.disc_id)
             if metadata is not None:
@@ -80,7 +89,10 @@ class DiscMonitor:
                         metadata.mb_release_id, self._artwork_cache_dir
                     )
                     metadata = replace(metadata, artwork_path=artwork_path)
-                self._cache.put(metadata)
+                try:
+                    self._cache.put(metadata)
+                except Exception:
+                    logger.exception("metadata cache write failed for %s", disc_toc.disc_id)
 
         self._player.set_disc(disc_toc, metadata)
 

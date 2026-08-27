@@ -4,9 +4,13 @@ re-inserting a known disc doesn't need network access.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS discs (
@@ -45,9 +49,34 @@ class DiscMetadata:
 class MetadataCache:
     def __init__(self, db_path: str):
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._conn.executescript(SCHEMA)
-        self._conn.commit()
+        self._conn = self._open(db_path)
+
+    def _open(self, db_path: str) -> sqlite3.Connection:
+        # This is just a cache -- every row is cheaply re-derivable from
+        # MusicBrainz/the Cover Art Archive on the next disc insert -- so a
+        # corrupt file (e.g. a torn write from this appliance being power-
+        # cycled rather than shut down cleanly) must never prevent the app
+        # from starting. Move the bad file aside (for later inspection, not
+        # silently discarded) and start over with a fresh one.
+        conn = sqlite3.connect(db_path, check_same_thread=False)
+        try:
+            conn.executescript(SCHEMA)
+            conn.commit()
+        except sqlite3.DatabaseError:
+            logger.exception("metadata cache at %s is corrupt -- recreating it", db_path)
+            conn.close()
+            self._quarantine(db_path)
+            conn = sqlite3.connect(db_path, check_same_thread=False)
+            conn.executescript(SCHEMA)
+            conn.commit()
+        return conn
+
+    @staticmethod
+    def _quarantine(db_path: str) -> None:
+        suffix = f".corrupt-{int(time.time())}"
+        for path in [Path(db_path), *Path(db_path).parent.glob(Path(db_path).name + "-*")]:
+            if path.exists():
+                path.rename(path.with_name(path.name + suffix))
 
     def get(self, disc_id: str) -> DiscMetadata | None:
         cur = self._conn.execute(
