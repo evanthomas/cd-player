@@ -21,6 +21,11 @@ read off the disc.
 
 ## System dependencies
 
+`./setup.sh` (or `./setup.sh --ui` to include the touchscreen UI) automates everything in
+this section and the next -- system packages, the virtual environment, and pygame's
+from-source build. Safe to re-run. The manual steps below are what it runs, spelled out for
+reference.
+
 Audio extraction shells out to `cdparanoia`, and disc identification uses `libdiscid`:
 
 ```bash

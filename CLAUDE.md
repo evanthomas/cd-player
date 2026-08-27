@@ -12,15 +12,21 @@ API (`play`/`pause`/`stop`/skip forward/skip backward/eject) and a touchscreen U
 
 ## Commands
 
-System deps (not pip-installable): `sudo apt install cdparanoia libdiscid0`.
+`./setup.sh` (`--ui` to also build pygame from source for the touchscreen) installs system
+packages, creates `.venv`, and installs the Python package -- automates the manual steps
+below. Safe to re-run.
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup
+python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"   # setup (what setup.sh automates)
 .venv/bin/pytest tests/                                       # run all tests
 .venv/bin/pytest tests/test_state.py -v                       # single file
 .venv/bin/cd-player                                            # run the app (needs CLI args, see README.md / --help)
 .venv/bin/cd-player-ui                                         # touchscreen UI, separate process (needs pygame, see README.md)
 ```
+
+`./install-service.sh` installs `cd-player`/`cd-player-ui` as systemd services that start at
+boot -- see the "Boot-time deployment" architecture note below before touching anything
+under `deploy/`.
 
 The test suite needs no real hardware (CD drive, Sonos speaker) — it runs entirely against
 fakes/doubles. Real-hardware behavior in this project has repeatedly diverged from what
@@ -98,6 +104,32 @@ logged, not raised). `status()` never calls `SonosController.get_volume()` direc
 live, uncached UPnP round trip per SoCo's `ZoneGroup.volume`) — volume is polled by
 `SonosPoller` on its existing cadence and cached on the state machine, exactly like
 `_elapsed_seconds`, so the single most-called endpoint in the app stays 100% in-memory.
+
+### Boot-time deployment (`deploy/`, `install-service.sh`)
+
+The appliance runs as two systemd services, `cd-player.service` and `cd-player-ui.service`
+(`deploy/*.service`), installed by `install-service.sh` and started at boot via
+`multi-user.target` — both run as plain `User=pi`; DRM (`/dev/dri/card*`) and touch input
+(`/dev/input/event*`) are gated by static udev group rules on this hardware, not
+`systemd-logind` per-session ACLs, so no root or session/PAM handling is needed. Runtime
+config (`--speaker-name`/`--advertise-host`/`--device-path`) lives in `/etc/default/cd-player`
+(templated from `deploy/cd-player.env.example`, created once by `install-service.sh` and
+never overwritten on re-install) rather than the unit files, via systemd's own
+`EnvironmentFile=` + `${VAR}` substitution in `ExecStart=` — note this substitutes each
+`${VAR}` as one argument regardless of embedded spaces (e.g. a speaker named "Living Room"),
+since it's systemd's own exec-line parsing, not a shell.
+
+`cd-player.service`'s `ExecStartPre=-deploy/cd-player-boot.sh` (the leading `-` makes a
+nonzero exit non-fatal) is what makes this self-updating: it waits up to
+`CD_PLAYER_UPDATE_TIMEOUT_SECONDS` (default 120s) for `origin` to become reachable —
+`network-online.target` alone only means the network stack is up, not that any specific
+remote is actually reachable yet, since WiFi association/DHCP can still be settling — then
+fast-forwards to the latest commit. It never touches uncommitted local changes or a diverged
+branch (skips and logs instead), and a fully offline boot still starts `cd-player` with
+whatever code is already on disk rather than blocking forever. `cd-player-ui.service` has no
+`Requires=`/`BindsTo=` on `cd-player.service`, only `After=` — the UI's own poller already
+tolerates the server being briefly unavailable (see above), so making the units fail
+together would undo that.
 
 ### Gotchas (found via real-hardware testing, not from reading Sonos/UPnP docs)
 

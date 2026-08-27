@@ -1,0 +1,19 @@
+[Unit]
+Description=CD Player touchscreen UI
+After=network-online.target cd-player.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/cd-player
+# Not Requires=/BindsTo= cd-player.service: the UI is a resilient REST
+# client by design (see CLAUDE.md) and should keep polling/retrying even if
+# the server is briefly down, not go down with it.
+ExecStart=/home/pi/cd-player/.venv/bin/cd-player-ui --api-base-url http://localhost:8080 --rotate 270
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
