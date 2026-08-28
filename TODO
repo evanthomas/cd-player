@@ -7,3 +7,4 @@
 - Improve the speakers and volume screen
 - Crashes/lockups
 - Sluggish UI response: Long delay after inseting the CD before the UI appears; poor feedback when skipping; volume slider
+- Reduce UI polling
