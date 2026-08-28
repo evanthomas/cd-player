@@ -203,6 +203,15 @@ together would undo that.
   end-of-track keeps reporting `STOPPED` on the next poll too, a blip doesn't. Only
   auto-advance-on-STOPPED needed this guard; tracks started via an already-active Sonos
   session (skip, gapless auto-advance) never exhibited the blip.
+  **This debounce directly sets the audible gap between tracks** — two confirmations means
+  the gap is roughly 2x `--sonos-poll-interval`, not pre-ripping (already fast: the next
+  track is normally fully ripped well before it's needed) or Sonos's own reconnect (also
+  fast once triggered). Measured live 2026-08-28: at the previous 1.5s default,
+  `elapsed_seconds` sat frozen for ~2.4s before the next track appeared playing; lowering
+  the default to 0.5s (now `CD_PLAYER_SONOS_POLL_INTERVAL` in `/etc/default/cd-player`) cut
+  the same measured gap to ~0.35s on a repeat test. Don't lower it further without
+  re-verifying the blip-filtering still works — the debounce's safety margin shrinks along
+  with the interval.
 - **Rapid successive commands (e.g. mashing skip-forward on the touchscreen) can make the
   REST API itself time out**, not just queue up track changes: each state-changing call holds
   `PlayerStateMachine._lock` across a real network call to Sonos (`play_uri`) and a
