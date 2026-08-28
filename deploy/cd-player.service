@@ -4,6 +4,11 @@ After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=60
 StartLimitBurst=5
+# The metadata cache/artwork live on a dedicated USB drive (not the SD
+# card's overlay-protected root -- see CLAUDE.md), mounted via /etc/fstab
+# at /mnt/cd-player-data. Fail closed rather than silently falling back to
+# the overlay's ephemeral tmpfs if that drive isn't actually mounted.
+RequiresMountsFor=/mnt/cd-player-data
 
 [Service]
 Type=simple
@@ -11,14 +16,13 @@ User=pi
 Group=pi
 WorkingDirectory=/home/pi/cd-player
 EnvironmentFile=-/etc/default/cd-player
-StateDirectory=cd-player
 # Leading "-": a failed update must never prevent the appliance from
 # starting (see deploy/cd-player-boot.sh).
 ExecStartPre=-/home/pi/cd-player/deploy/cd-player-boot.sh
 # ${VAR} here is substituted as a single argument each, even if the value
 # itself contains spaces (e.g. a speaker named "Living Room") -- this is
 # systemd's own Exec*= substitution, not a shell, so it is not re-split.
-ExecStart=/home/pi/cd-player/.venv/bin/cd-player --speaker-name ${CD_PLAYER_SPEAKER_NAME} --advertise-host ${CD_PLAYER_ADVERTISE_HOST} --device-path ${CD_PLAYER_DEVICE_PATH} --db-path /var/lib/cd-player/cache.db --artwork-dir /var/lib/cd-player/artwork
+ExecStart=/home/pi/cd-player/.venv/bin/cd-player --speaker-name ${CD_PLAYER_SPEAKER_NAME} --advertise-host ${CD_PLAYER_ADVERTISE_HOST} --device-path ${CD_PLAYER_DEVICE_PATH} --db-path /mnt/cd-player-data/cache.db --artwork-dir /mnt/cd-player-data/artwork
 Restart=on-failure
 RestartSec=5
 

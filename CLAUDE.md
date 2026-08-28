@@ -119,6 +119,24 @@ never overwritten on re-install) rather than the unit files, via systemd's own
 `${VAR}` as one argument regardless of embedded spaces (e.g. a speaker named "Living Room"),
 since it's systemd's own exec-line parsing, not a shell.
 
+**Root is overlay-protected on this Pi (enabled 2026-08-27)** — `/` is a tmpfs-over-ext4
+overlay (Raspberry Pi OS's `overlayroot`), so any write under `/` (including `/etc`,
+`/home/pi/cd-player`'s working tree, and anywhere under `/var`) is discarded on the next
+reboot, reverting to whatever was there when overlay was last (re-)enabled. `/boot/firmware`
+is the only writable exception. This is why `cd-player.service` points `--db-path`/
+`--artwork-dir` at `/mnt/cd-player-data` (a dedicated USB drive, ext4, mounted via a
+permanent `/etc/fstab` entry by UUID, `nofail` so a missing drive doesn't hang boot) rather
+than `/var/lib/cd-player` — the metadata cache/artwork need to actually persist, and nothing
+under `/` does anymore. `RequiresMountsFor=/mnt/cd-player-data` on the unit makes the service
+fail closed (won't start) rather than silently writing cache data to the overlay's ephemeral
+tmpfs if that drive isn't mounted. Persistent edits to anything under `/` (a new fstab line,
+a changed unit file, etc.) need `sudo overlayroot-chroot <command>` — it remounts the real
+underlying filesystem (`/media/root-ro`) read-write and chroots into it for that one command,
+which is much simpler than disabling overlay + rebooting to edit + re-enabling + rebooting
+again. A local `git commit` made directly on this Pi that isn't pushed to `origin` before the
+next reboot is lost the same way — `cd-player-boot.sh`'s fetch-on-boot is what actually
+carries code changes across a power cycle now, not the on-disk working tree.
+
 `cd-player.service`'s `ExecStartPre=-deploy/cd-player-boot.sh` (the leading `-` makes a
 nonzero exit non-fatal) is what makes this self-updating: it waits up to
 `CD_PLAYER_UPDATE_TIMEOUT_SECONDS` (default 120s) for `origin` to become reachable —
