@@ -22,7 +22,7 @@ ExecStartPre=-/home/pi/cd-player/deploy/cd-player-boot.sh
 # ${VAR} here is substituted as a single argument each, even if the value
 # itself contains spaces (e.g. a speaker named "Living Room") -- this is
 # systemd's own Exec*= substitution, not a shell, so it is not re-split.
-ExecStart=/home/pi/cd-player/.venv/bin/cd-player --speaker-name ${CD_PLAYER_SPEAKER_NAME} --advertise-host ${CD_PLAYER_ADVERTISE_HOST} --device-path ${CD_PLAYER_DEVICE_PATH} --db-path /mnt/cd-player-data/cache.db --artwork-dir /mnt/cd-player-data/artwork
+ExecStart=/home/pi/cd-player/.venv/bin/cd-player --speaker-name ${CD_PLAYER_SPEAKER_NAME} --advertise-host ${CD_PLAYER_ADVERTISE_HOST} --device-path ${CD_PLAYER_DEVICE_PATH} --db-path /mnt/cd-player-data/cache.db --artwork-dir /mnt/cd-player-data/artwork --sonos-poll-interval ${CD_PLAYER_SONOS_POLL_INTERVAL}
 Restart=on-failure
 RestartSec=5
 
