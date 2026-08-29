@@ -31,6 +31,13 @@ def lookup_disc(disc_id: str) -> DiscMetadata | None:
 
     tracks: list[TrackMetadata] = []
     for medium in release.get("medium-list", []):
+        # A multi-disc release (e.g. a box set) has one medium per physical
+        # disc, each with its own track 1, 2, 3... -- only the medium whose
+        # disc-list contains this disc_id corresponds to what's actually in
+        # the drive; the others belong to different physical discs.
+        disc_ids = {disc["id"] for disc in medium.get("disc-list", [])}
+        if disc_id not in disc_ids:
+            continue
         for track in medium.get("track-list", []):
             tracks.append(
                 TrackMetadata(
