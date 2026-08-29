@@ -4,3 +4,5 @@
 - Improve the speakers and volume screen
 - Sluggish UI response: Long delay after inseting the CD before the UI appears; poor feedback when skipping; volume slider
 - Reduce UI polling
+- Auto play when a CD is loaded
+- Turn of screen after a few minutes of inactivity
