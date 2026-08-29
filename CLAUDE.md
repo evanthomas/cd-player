@@ -63,9 +63,11 @@ machine, registry, controller, monitor, poller, Flask blueprints — gets wired 
 
 `cd_player/ui/` is `cd-player-ui`, a separate process/console script rendering a landscape
 touch UI straight to the DRM/KMS framebuffer (SDL2's `kmsdrm` video driver — no X11/Wayland
-compositor). It's a REST client, nothing more: `ui/poller.py` polls `GET /status` on a
-background thread (mirrors `sonos/poller.py`'s poll-not-push design) and `ui/app.py`
-dispatches button taps to the same `POST` endpoints curl or the Sonos app would hit. This
+compositor). It's a REST client, nothing more: `ui/client.py`'s `PlayerClient` wraps the
+actual HTTP calls, `ui/poller.py` polls `GET /status` through it on a background thread
+(mirrors `sonos/poller.py`'s poll-not-push design), and `ui/app.py` dispatches button taps
+(and, via its `VolumeSender`, throttled volume drags) to the same `POST` endpoints curl or
+the Sonos app would hit. This
 keeps a rendering crash from ever touching the audio-critical ripping/streaming code in
 `cd-player` itself, at the cost of REST round-trip latency per tap. `ui/view_model.py`,
 `ui/layout.py`, and `ui/rotation.py` are pure and unit-tested (status→view mapping, button
