@@ -13,8 +13,8 @@ read off the disc.
 
 ## Hardware
 
-- Raspberry Pi 5 (an earlier Pi didn't supply enough power for the optical drive plus the
-  screen). The Pi requires a fan for cooling other it will suffer thermal lockups.
+- Raspberry Pi 5 (an earlier Pi won't supply enough power for the optical drive plus the
+  screen). The Pi requires a fan for cooling otherwise it will suffer thermal lockups.
 - USB optical drive or SATA with SATA to USB cable.
 - A screen
 - A Sonos speaker on the same LAN

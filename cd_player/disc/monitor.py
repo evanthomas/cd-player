@@ -40,6 +40,15 @@ class DiscMonitor:
         self._monitor = pyudev.Monitor.from_netlink(self._context)
         self._monitor.filter_by(subsystem="block")
         self._thread = threading.Thread(target=self._run, daemon=True)
+        # Our own view of whether a disc is loaded, updated only by events
+        # this monitor has itself processed -- deliberately NOT read from
+        # PlayerStateMachine.has_disc(), which a REST /eject call clears
+        # immediately (see PlayerStateMachine.eject()), before the physical
+        # eject's own udev "change" event has even arrived. If this used
+        # the player's state instead, that later (harmless, expected)
+        # confirmation event would arrive to find has_disc already false
+        # and be misread as a new disc arriving.
+        self._disc_present = False
 
     def start(self) -> None:
         self._check_initial_state()
@@ -61,7 +70,19 @@ class DiscMonitor:
             if device.get("ID_CDROM_MEDIA") == "1":
                 self._handle_insert()
             elif device.action == "change":
-                self._handle_eject()
+                # This same event shape (a bare "change" with no media info
+                # yet) fires for two physically distinct things: a real
+                # eject, or the drive announcing it's noticed a new disc
+                # before it's finished spinning up enough to read the TOC
+                # (measured on this hardware at 10+ seconds -- see
+                # CLAUDE.md). self._disc_present (not the player's state --
+                # see __init__) disambiguates reliably: a disc we already
+                # know was loaded means this is a real eject; no disc means
+                # a new one is on its way in.
+                if self._disc_present:
+                    self._handle_eject()
+                else:
+                    self._player.begin_identifying()
 
     def _handle_insert(self) -> None:
         logger.info("disc inserted in %s", self._device_path)
@@ -70,6 +91,14 @@ class DiscMonitor:
         except Exception:
             logger.exception("failed to read TOC for %s", self._device_path)
             return
+
+        # Register the disc immediately (has_disc, track count, Play
+        # enabled) so the UI acknowledges the insert right away, rather
+        # than waiting on the MusicBrainz/cover-art lookups below -- those
+        # are network round-trips that can take several seconds on a cache
+        # miss. Metadata is filled in separately once it resolves.
+        self._disc_present = True
+        self._player.set_disc(disc_toc, None)
 
         try:
             metadata = self._cache.get(disc_toc.disc_id)
@@ -94,8 +123,10 @@ class DiscMonitor:
                 except Exception:
                     logger.exception("metadata cache write failed for %s", disc_toc.disc_id)
 
-        self._player.set_disc(disc_toc, metadata)
+        if metadata is not None:
+            self._player.update_metadata(disc_toc.disc_id, metadata)
 
     def _handle_eject(self) -> None:
         logger.info("disc ejected from %s", self._device_path)
+        self._disc_present = False
         self._player.set_disc(None, None)

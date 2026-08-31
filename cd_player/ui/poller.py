@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 NO_DISC = ViewState(
     has_disc=False,
+    is_identifying=False,
     player_state="stopped",
     disc_title=None,
     disc_artist=None,

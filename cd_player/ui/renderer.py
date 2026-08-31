@@ -42,12 +42,23 @@ class Renderer:
         pressed_button: str | None = None,
     ) -> None:
         canvas.fill(BLACK)
+        if view.is_identifying and not view.has_disc:
+            self._draw_identifying(canvas, layout)
+            return
         if not view.has_disc:
             return
 
         self._draw_artwork(canvas, view, layout)
         self._draw_text(canvas, view, layout)
         self._draw_buttons(canvas, view, layout, pressed_button)
+
+    def _draw_identifying(self, canvas: pygame.Surface, layout: Layout) -> None:
+        # Shown while the drive is still spinning up a newly-inserted disc,
+        # well before has_disc is true -- see DiscMonitor._run()/
+        # PlayerStateMachine.begin_identifying().
+        x, y, w, h = layout.text_rect
+        surf = self._title_font.render("Reading disc...", True, DIM)
+        canvas.blit(surf, (x + (w - surf.get_width()) // 2, y + (h - surf.get_height()) // 2))
 
     def _draw_artwork(self, canvas: pygame.Surface, view: ViewState, layout: Layout) -> None:
         x, y, w, h = layout.artwork_rect

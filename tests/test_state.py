@@ -3,6 +3,7 @@ import pytest
 from cd_player.config import Config
 from cd_player.disc.ripper import RipSessionRegistry
 from cd_player.disc.toc import DiscToc, TrackInfo
+from cd_player.metadata.cache import DiscMetadata
 from cd_player.state import PlayerState, PlayerStateMachine
 
 
@@ -315,6 +316,7 @@ def test_eject_while_playing_stops_first_then_opens_tray(fake_eject_tray):
     assert player.status() == {
         "state": "stopped",
         "has_disc": False,
+        "is_identifying": False,
         "current_track_number": None,
         "elapsed_seconds": 0.0,
         "track_duration_seconds": None,
@@ -512,3 +514,89 @@ def test_status_includes_selected_speakers_and_volume():
 
     assert status["selected_speakers"] == ["Study"]
     assert status["volume"] == 55
+
+
+def test_update_metadata_fills_in_title_after_placeholder_insert():
+    player, _sonos = make_player()
+    toc = make_toc()
+    player.set_disc(toc, None)
+    assert player.status()["has_disc"] is True
+    assert player.status()["disc"] is None  # placeholder: no metadata yet
+
+    metadata = DiscMetadata(
+        disc_id=toc.disc_id, mb_release_id="mb-1", title="Album", artist="Artist", artwork_path=None
+    )
+    player.update_metadata(toc.disc_id, metadata)
+
+    assert player.status()["disc"]["title"] == "Album"
+
+
+def test_update_metadata_ignored_if_disc_changed_since():
+    player, _sonos = make_player()
+    old_toc = make_toc()
+    other_toc = DiscToc(disc_id="other-disc", tracks=old_toc.tracks)
+    player.set_disc(old_toc, None)
+    player.set_disc(other_toc, None)  # a different disc was inserted meanwhile
+
+    stale_metadata = DiscMetadata(
+        disc_id=old_toc.disc_id, mb_release_id="mb-1", title="Stale", artist="Artist", artwork_path=None
+    )
+    player.update_metadata(old_toc.disc_id, stale_metadata)
+
+    assert player.status()["disc"] is None
+
+
+def test_begin_identifying_sets_flag_when_no_disc_loaded():
+    player, _sonos = make_player()
+
+    player.begin_identifying()
+
+    assert player.status()["is_identifying"] is True
+    assert player.has_disc() is False
+
+
+def test_begin_identifying_ignored_when_disc_already_loaded():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+
+    player.begin_identifying()
+
+    assert player.status()["is_identifying"] is False
+    assert player.has_disc() is True
+
+
+def test_set_disc_clears_identifying_flag():
+    player, _sonos = make_player()
+    player.begin_identifying()
+
+    player.set_disc(make_toc(), None)
+
+    assert player.status()["is_identifying"] is False
+
+
+def test_eject_clears_identifying_flag(fake_eject_tray):
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.begin_identifying()  # shouldn't set it (disc already loaded), but exercise eject anyway
+
+    player.eject()
+
+    assert player.status()["is_identifying"] is False
+
+
+def test_update_metadata_does_not_disturb_playback():
+    player, sonos = make_player()
+    toc = make_toc()
+    player.set_disc(toc, None)
+    player.play()
+    assert player.status()["state"] == "playing"
+    calls_before = list(sonos.calls)
+
+    metadata = DiscMetadata(
+        disc_id=toc.disc_id, mb_release_id="mb-1", title="Album", artist="Artist", artwork_path=None
+    )
+    player.update_metadata(toc.disc_id, metadata)
+
+    assert player.status()["state"] == "playing"
+    assert player.status()["disc"]["title"] == "Album"
+    assert sonos.calls == calls_before  # no extra stop()/play_uri() from filling in metadata
