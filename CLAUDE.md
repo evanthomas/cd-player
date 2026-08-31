@@ -96,6 +96,14 @@ tick and feeds it to `PlayerStateMachine.on_sonos_position()`. Both are exposed 
 `/status` as `elapsed_seconds`/`track_duration_seconds`, reset together with
 `current_track_number` on every stop/eject/track change (see `_reset_playback_position()`).
 
+`SonosPoller` also calls `PlayerStateMachine.maybe_auto_stop_after_pause_timeout()` every
+tick, which stops playback once it's been continuously PAUSED for `--pause-timeout` (default
+300s) -- an appliance shouldn't sit paused indefinitely holding the Sonos connection if
+nobody comes back to resume it. `_paused_since` is set on entering PAUSED from either path
+(REST `pause()` or a Sonos-app-driven `PAUSED_PLAYBACK` via `on_sonos_state()`) and is stale
+-- but harmless -- once no longer paused, since every check is guarded on the current state
+being PAUSED first; no explicit clearing needed on every possible exit from PAUSED.
+
 `config.py` builds `Config` from CLI args (`argparse`), not environment variables —
 `load_config()`/`build_arg_parser()` are the source of truth for flags and defaults, not
 the README table (keep both in sync when adding a flag). The Sonos speaker is identified

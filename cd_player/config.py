@@ -23,6 +23,7 @@ class Config:
     stream_base_url: str
     sonos_poll_interval_seconds: float
     auto_play: bool = False
+    pause_timeout_seconds: float = 300.0
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -90,6 +91,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Start playback automatically as soon as a disc is identified, instead of "
         "requiring an explicit play command. Off by default.",
     )
+    parser.add_argument(
+        "--pause-timeout",
+        type=float,
+        default=300.0,
+        help="Seconds a track can sit paused before it's automatically stopped, rather "
+        "than holding the Sonos connection indefinitely if nobody comes back to resume "
+        "it (default: %(default)s)",
+    )
     return parser
 
 
@@ -105,6 +114,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         stream_base_url=f"http://{args.advertise_host}:{args.bind_port}",
         sonos_poll_interval_seconds=args.sonos_poll_interval,
         auto_play=args.auto_play,
+        pause_timeout_seconds=args.pause_timeout,
     )
 
 

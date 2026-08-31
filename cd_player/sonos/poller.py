@@ -17,11 +17,16 @@ logger = logging.getLogger(__name__)
 
 class SonosPoller:
     def __init__(
-        self, sonos: SonosController, player: PlayerStateMachine, interval_seconds: float
+        self,
+        sonos: SonosController,
+        player: PlayerStateMachine,
+        interval_seconds: float,
+        pause_timeout_seconds: float = 300.0,
     ):
         self._sonos = sonos
         self._player = player
         self._interval = interval_seconds
+        self._pause_timeout_seconds = pause_timeout_seconds
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
 
@@ -35,6 +40,7 @@ class SonosPoller:
     def _run(self) -> None:
         while not self._stop_event.wait(self._interval):
             try:
+                self._player.maybe_auto_stop_after_pause_timeout(self._pause_timeout_seconds)
                 if not self._sonos.has_selection():
                     continue
                 state = self._sonos.get_transport_state()

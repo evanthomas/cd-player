@@ -31,7 +31,9 @@ def create_app(argv: list[str] | None = None) -> tuple[Flask, SonosPoller, DiscM
         player=player,
         auto_play=config.auto_play,
     )
-    poller = SonosPoller(sonos, player, config.sonos_poll_interval_seconds)
+    poller = SonosPoller(
+        sonos, player, config.sonos_poll_interval_seconds, config.pause_timeout_seconds
+    )
 
     app = Flask(__name__)
     app.register_blueprint(build_api_blueprint(player))

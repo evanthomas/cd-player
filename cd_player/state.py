@@ -11,6 +11,7 @@ from __future__ import annotations
 import enum
 import logging
 import threading
+import time
 import uuid
 
 from cd_player.config import Config
@@ -39,6 +40,11 @@ class PlayerStateMachine:
         self._state = PlayerState.STOPPED
         self._toc: DiscToc | None = None
         self._metadata: DiscMetadata | None = None
+        # Set on entering PAUSED (from either pause() or a Sonos-app-driven
+        # PAUSED_PLAYBACK), checked by maybe_auto_stop_after_pause_timeout().
+        # Stale once no longer paused, but harmless -- every check is
+        # guarded on self._state == PAUSED first.
+        self._paused_since: float | None = None
         self._current_track_number: int | None = None
         self._current_track_duration_seconds: float | None = None
         # Only Sonos knows actual playback position (audio is streamed
@@ -118,6 +124,7 @@ class PlayerStateMachine:
                 return
             self._sonos.pause()
             self._state = PlayerState.PAUSED
+            self._paused_since = time.monotonic()
 
     def stop(self) -> None:
         with self._lock:
@@ -248,6 +255,7 @@ class PlayerStateMachine:
                 self._pending_stop_confirmations = 0
                 if self._state == PlayerState.PLAYING:
                     self._state = PlayerState.PAUSED
+                    self._paused_since = time.monotonic()
             elif sonos_state == "STOPPED":
                 if self._state == PlayerState.STOPPED:
                     return
@@ -286,6 +294,20 @@ class PlayerStateMachine:
             if self._next_session is not None:
                 return
             self._start_prerip(self._current_track_number + 1)
+
+    def maybe_auto_stop_after_pause_timeout(self, timeout_seconds: float) -> None:
+        """Called periodically by the Sonos poller. An appliance shouldn't
+        sit paused indefinitely holding the Sonos connection if nobody
+        comes back to resume it -- stop after being continuously paused
+        for timeout_seconds. self.stop() is called while holding the lock,
+        safe since self._lock is reentrant.
+        """
+        with self._lock:
+            if self._state != PlayerState.PAUSED or self._paused_since is None:
+                return
+            if time.monotonic() - self._paused_since < timeout_seconds:
+                return
+            self.stop()
 
     # -- internals ------------------------------------------------------------
 

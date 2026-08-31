@@ -561,3 +561,77 @@ def test_update_metadata_does_not_disturb_playback():
     assert player.status()["state"] == "playing"
     assert player.status()["disc"]["title"] == "Album"
     assert sonos.calls == calls_before  # no extra stop()/play_uri() from filling in metadata
+
+
+def test_auto_stop_fires_after_paused_timeout(monkeypatch):
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+
+    fake_now = [1000.0]
+    monkeypatch.setattr("cd_player.state.time.monotonic", lambda: fake_now[0])
+    player.pause()
+    assert player.status()["state"] == "paused"
+
+    fake_now[0] += 299
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=300)
+    assert player.status()["state"] == "paused"
+
+    fake_now[0] += 1
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=300)
+    assert player.status()["state"] == "stopped"
+    assert sonos.calls[-1] == ("stop",)
+
+
+def test_auto_stop_does_not_fire_while_playing():
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=0)
+
+    assert player.status()["state"] == "playing"
+
+
+def test_auto_stop_does_not_fire_when_already_stopped():
+    player, _sonos = make_player()
+
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=0)
+
+    assert player.status()["state"] == "stopped"
+
+
+def test_resuming_then_pausing_again_resets_the_pause_clock(monkeypatch):
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+
+    fake_now = [1000.0]
+    monkeypatch.setattr("cd_player.state.time.monotonic", lambda: fake_now[0])
+    player.pause()
+
+    fake_now[0] += 250
+    player.play()  # resume
+    player.pause()  # pause again -- clock should restart from here
+
+    fake_now[0] += 250  # 250s since the second pause, not 500s since the first
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=300)
+
+    assert player.status()["state"] == "paused"
+
+
+def test_auto_stop_also_applies_to_sonos_app_driven_pause(monkeypatch):
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+
+    fake_now = [1000.0]
+    monkeypatch.setattr("cd_player.state.time.monotonic", lambda: fake_now[0])
+    player.on_sonos_state("PAUSED_PLAYBACK")
+    assert player.status()["state"] == "paused"
+
+    fake_now[0] += 300
+    player.maybe_auto_stop_after_pause_timeout(timeout_seconds=300)
+
+    assert player.status()["state"] == "stopped"
+    assert sonos.calls[-1] == ("stop",)

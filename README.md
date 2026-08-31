@@ -65,6 +65,7 @@ Run `cd-player --help` for the full list.
 | `--bind-port` | no | `8080` | Port for the REST/streaming server |
 | `--sonos-poll-interval` | no | `1.5` | Seconds between polls of Sonos's own transport state, used to detect play/pause triggered from the Sonos app itself |
 | `--auto-play` | no | off | Start playback automatically as soon as a disc is identified, instead of requiring an explicit `play` command |
+| `--pause-timeout` | no | `300` | Seconds a track can sit paused before it's automatically stopped, rather than holding the Sonos connection indefinitely |
 
 The default `--db-path`/`--artwork-dir` live under `/var/lib`, which typically needs root
 to create. Either run as a systemd service with a `StateDirectory=`, or point both at a
