@@ -18,7 +18,11 @@ class ViewState:
     disc_artist: str | None
     artwork_path: str | None
     current_track_number: int | None
-    current_track_title: str | None
+    # Split so the renderer can keep the number/label fixed in place while
+    # scrolling the title+time part if it's too long to fit -- see
+    # Renderer._draw_track_line().
+    current_track_label: str | None  # e.g. "2." or "Track 3" (no metadata)
+    current_track_scroll_text: str | None  # e.g. "Two   1:23 / 4:56"
     first_track: int | None
     last_track: int | None
     selected_speaker_names: list[str]
@@ -78,21 +82,25 @@ def view_state_from_status(status: dict) -> ViewState:
     disc = status.get("disc")
     track_number = status.get("current_track_number")
 
-    track_title = None
+    track_label = None
+    scroll_text = None
     if disc is not None and track_number is not None:
         for track in disc["tracks"]:
             if track["number"] == track_number:
-                track_title = f"{track_number}. {track['title']}"
+                track_label = f"{track_number}."
+                scroll_text = track["title"]
                 break
     elif track_number is not None:
         # Disc metadata unavailable (e.g. no MusicBrainz match) -- same
-        # fallback PlayerStateMachine._track_title uses for Sonos.
-        track_title = f"Track {track_number}"
+        # fallback PlayerStateMachine._track_title uses for Sonos. Nothing
+        # to scroll in this case beyond the time, appended below.
+        track_label = f"Track {track_number}"
 
     duration = status.get("track_duration_seconds")
-    if track_title is not None and duration is not None:
+    if track_label is not None and duration is not None:
         elapsed = status.get("elapsed_seconds") or 0.0
-        track_title = f"{track_title}   {_format_mmss(elapsed)} / {_format_mmss(duration)}"
+        time_text = f"{_format_mmss(elapsed)} / {_format_mmss(duration)}"
+        scroll_text = f"{scroll_text}   {time_text}" if scroll_text else time_text
 
     return ViewState(
         has_disc=status["has_disc"],
@@ -101,7 +109,8 @@ def view_state_from_status(status: dict) -> ViewState:
         disc_artist=disc["artist"] if disc is not None else None,
         artwork_path=disc["artwork_path"] if disc is not None else None,
         current_track_number=track_number,
-        current_track_title=track_title,
+        current_track_label=track_label,
+        current_track_scroll_text=scroll_text,
         first_track=status.get("first_track"),
         last_track=status.get("last_track"),
         selected_speaker_names=status.get("selected_speakers") or [],

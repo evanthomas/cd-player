@@ -5,6 +5,7 @@ pygame-dependent (like icons.py), so not unit-tested -- verify visually.
 from __future__ import annotations
 
 import logging
+import time
 
 import pygame
 
@@ -24,6 +25,9 @@ ICON_DISABLED = (65, 65, 65)
 ARTWORK_PLACEHOLDER = (30, 30, 30)
 
 _TEXT_LINE_GAP = 22
+_TRACK_SCROLL_SECONDS = 2.0
+_TRACK_SCROLL_HOLD_SECONDS = 0.5
+_TRACK_SCROLL_GAP_PX = 12
 
 
 class Renderer:
@@ -33,6 +37,15 @@ class Renderer:
         self._artist_font = pygame.font.Font(None, 42)
         self._track_font = pygame.font.Font(None, 52)
         self._artwork_cache: dict[str, pygame.Surface | None] = {}
+        # Which track the scroll animation below is currently timing --
+        # (number, disc title) rather than just the number, so swapping to
+        # a different disc that happens to land on the same track number
+        # still restarts the scroll instead of continuing an old offset.
+        # Deliberately excludes the ticking elapsed/duration time that's
+        # part of current_track_scroll_text itself, or the animation would
+        # restart every second and never actually scroll.
+        self._track_scroll_key: tuple[int | None, str | None] | None = None
+        self._track_scroll_start = 0.0
 
     def render(
         self,
@@ -87,7 +100,6 @@ class Renderer:
         for text, font, color, centered in (
             (view.disc_title, self._title_font, WHITE, True),
             (view.disc_artist, self._artist_font, DIM, True),
-            (view.current_track_title, self._track_font, WHITE, False),
         ):
             if not text:
                 continue
@@ -96,6 +108,53 @@ class Renderer:
             canvas.blit(surf, (line_x, cursor_y))
             cursor_y += surf.get_height() + _TEXT_LINE_GAP
 
+        if view.current_track_label or view.current_track_scroll_text:
+            self._draw_track_line(canvas, view, x, cursor_y, w)
+
+        canvas.set_clip(prev_clip)
+
+    def _draw_track_line(
+        self, canvas: pygame.Surface, view: ViewState, x: int, y: int, available_width: int
+    ) -> None:
+        # Track number/label stays fixed in place; only the title+time
+        # part scrolls, and only once it's actually too long to fit.
+        label_width = 0
+        if view.current_track_label:
+            label_surf = self._track_font.render(view.current_track_label, True, WHITE)
+            canvas.blit(label_surf, (x, y))
+            label_width = label_surf.get_width() + _TRACK_SCROLL_GAP_PX
+
+        if not view.current_track_scroll_text:
+            return
+
+        scroll_x = x + label_width
+        scroll_width = available_width - label_width
+        if scroll_width <= 0:
+            return
+
+        scroll_key = (view.current_track_number, view.disc_title)
+        if scroll_key != self._track_scroll_key:
+            self._track_scroll_key = scroll_key
+            self._track_scroll_start = time.monotonic()
+
+        text_surf = self._track_font.render(view.current_track_scroll_text, True, WHITE)
+        max_offset = text_surf.get_width() - scroll_width
+
+        offset = 0
+        if max_offset > 0:
+            cycle_seconds = _TRACK_SCROLL_SECONDS + _TRACK_SCROLL_HOLD_SECONDS
+            elapsed = (time.monotonic() - self._track_scroll_start) % cycle_seconds
+            if elapsed >= _TRACK_SCROLL_SECONDS:
+                # Hold at the fully-scrolled position instead of jumping
+                # straight back to the start -- a bare loop read as an
+                # abrupt, hard-to-read jump-cut.
+                offset = max_offset
+            else:
+                offset = int((elapsed / _TRACK_SCROLL_SECONDS) * max_offset)
+
+        prev_clip = canvas.get_clip()
+        canvas.set_clip(pygame.Rect(scroll_x, y, scroll_width, text_surf.get_height()))
+        canvas.blit(text_surf, (scroll_x - offset, y))
         canvas.set_clip(prev_clip)
 
     def _draw_buttons(

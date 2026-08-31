@@ -9,7 +9,8 @@ def test_no_disc_is_black_screen_state():
     assert view.has_disc is False
     assert view.disc_title is None
     assert view.artwork_path is None
-    assert view.current_track_title is None
+    assert view.current_track_label is None
+    assert view.current_track_scroll_text is None
 
 
 def test_disc_with_metadata_resolves_current_track_title():
@@ -34,7 +35,8 @@ def test_disc_with_metadata_resolves_current_track_title():
     assert view.disc_title == "Album"
     assert view.disc_artist == "Artist"
     assert view.artwork_path == "/tmp/art.jpg"
-    assert view.current_track_title == "2. Two"
+    assert view.current_track_label == "2."
+    assert view.current_track_scroll_text == "Two"
 
 
 def test_disc_without_metadata_falls_back_to_track_number():
@@ -46,7 +48,8 @@ def test_disc_without_metadata_falls_back_to_track_number():
 
     assert view.has_disc is True
     assert view.disc_title is None
-    assert view.current_track_title == "Track 3"
+    assert view.current_track_label == "Track 3"
+    assert view.current_track_scroll_text is None
 
 
 def test_no_current_track_has_no_track_title():
@@ -54,7 +57,8 @@ def test_no_current_track_has_no_track_title():
 
     view = view_state_from_status(status)
 
-    assert view.current_track_title is None
+    assert view.current_track_label is None
+    assert view.current_track_scroll_text is None
 
 
 def test_track_title_includes_elapsed_and_total_time():
@@ -75,7 +79,8 @@ def test_track_title_includes_elapsed_and_total_time():
 
     view = view_state_from_status(status)
 
-    assert view.current_track_title == "2. Two   1:23 / 4:56"
+    assert view.current_track_label == "2."
+    assert view.current_track_scroll_text == "Two   1:23 / 4:56"
 
 
 def test_track_title_with_no_metadata_still_includes_time():
@@ -90,7 +95,8 @@ def test_track_title_with_no_metadata_still_includes_time():
 
     view = view_state_from_status(status)
 
-    assert view.current_track_title == "Track 3   0:05 / 1:05"
+    assert view.current_track_label == "Track 3"
+    assert view.current_track_scroll_text == "0:05 / 1:05"
 
 
 def test_track_title_omits_time_when_duration_unknown():
@@ -105,7 +111,8 @@ def test_track_title_omits_time_when_duration_unknown():
 
     view = view_state_from_status(status)
 
-    assert view.current_track_title is None
+    assert view.current_track_label is None
+    assert view.current_track_scroll_text is None
 
 
 def _status(player_state, current_track_number, first_track=1, last_track=3, has_disc=True):
