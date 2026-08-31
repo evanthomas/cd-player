@@ -316,7 +316,6 @@ def test_eject_while_playing_stops_first_then_opens_tray(fake_eject_tray):
     assert player.status() == {
         "state": "stopped",
         "has_disc": False,
-        "is_identifying": False,
         "current_track_number": None,
         "elapsed_seconds": 0.0,
         "track_duration_seconds": None,
@@ -544,44 +543,6 @@ def test_update_metadata_ignored_if_disc_changed_since():
     player.update_metadata(old_toc.disc_id, stale_metadata)
 
     assert player.status()["disc"] is None
-
-
-def test_begin_identifying_sets_flag_when_no_disc_loaded():
-    player, _sonos = make_player()
-
-    player.begin_identifying()
-
-    assert player.status()["is_identifying"] is True
-    assert player.has_disc() is False
-
-
-def test_begin_identifying_ignored_when_disc_already_loaded():
-    player, _sonos = make_player()
-    player.set_disc(make_toc(), None)
-
-    player.begin_identifying()
-
-    assert player.status()["is_identifying"] is False
-    assert player.has_disc() is True
-
-
-def test_set_disc_clears_identifying_flag():
-    player, _sonos = make_player()
-    player.begin_identifying()
-
-    player.set_disc(make_toc(), None)
-
-    assert player.status()["is_identifying"] is False
-
-
-def test_eject_clears_identifying_flag(fake_eject_tray):
-    player, _sonos = make_player()
-    player.set_disc(make_toc(), None)
-    player.begin_identifying()  # shouldn't set it (disc already loaded), but exercise eject anyway
-
-    player.eject()
-
-    assert player.status()["is_identifying"] is False
 
 
 def test_update_metadata_does_not_disturb_playback():

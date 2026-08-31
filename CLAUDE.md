@@ -69,19 +69,10 @@ these are network round-trips that can take several seconds — before handing t
 touching playback state (unlike `set_disc()`, which unconditionally stops Sonos and resets
 position — safe for a real insert/eject, wrong for patching in metadata after the fact).
 `main.py`'s `create_app()` is where all of this — state machine, registry, controller,
-monitor, poller, Flask blueprints — gets wired together.
-
-`DiscMonitor` tracks disc presence itself (`self._disc_present`), separately from
-`PlayerStateMachine`'s own state, specifically to disambiguate the udev event stream: a bare
-`change` event with no `ID_CDROM_MEDIA` fires for two physically distinct things — a real
-eject, or the drive announcing activity before it's spun up enough to read a TOC. Only a
-disc that was actually loaded can be ejected, so whichever one it is depends on whether a
-disc was already present. That can't be read from `PlayerStateMachine.has_disc()`, though:
-a REST-triggered `eject()` clears it immediately (so `/status` is consistent for the caller
-right away), before the drive's own confirming udev event has even arrived — so asking the
-player would make that harmless, expected confirmation look like a new disc arriving.
-`DiscMonitor` keeping its own bit, updated only from events it has itself processed, avoids
-that race.
+monitor, poller, Flask blueprints — gets wired together. A bare udev `change` event with no
+`ID_CDROM_MEDIA` (no media info yet) always means eject — `DiscMonitor._handle_eject()` runs
+unconditionally for it, which is a harmless no-op if the disc was already cleared (see
+Gotchas below for why it's *only* ever treated as eject).
 
 `cd_player/ui/` is `cd-player-ui`, a separate process/console script rendering a landscape
 touch UI straight to the DRM/KMS framebuffer (SDL2's `kmsdrm` video driver — no X11/Wayland
@@ -291,5 +282,22 @@ together would undo that.
   `cd_player`. Don't re-diagnose "slow disc insert" as a metadata/network problem without
   measuring where the time actually goes first (`udevadm monitor --udev --property
   --subsystem-match=block` against the drive, correlated with `has_disc` in `/status`).
+- **A bare udev `change` event with no `ID_CDROM_MEDIA` isn't a reliable way to detect a new
+  disc spinning up, and using it that way actively misfires after an ordinary eject.** Tried
+  and reverted 2026-08-31: the idea was to show a "reading disc..." placeholder from this
+  event (it can precede the drive finishing its spin-up, before `ID_CDROM_MEDIA` appears),
+  distinguishing it from a real eject via whether a disc was already known to be loaded.
+  Two problems, both confirmed live: (1) the precursor event isn't reliably emitted at all —
+  some inserts go straight from silence to a single fully-resolved event, so the placeholder
+  often just never appeared; (2) worse, a real eject of an *actually loaded* disc sometimes
+  fires **more than one** bare `change` event for the same physical eject — the first
+  correctly registers as the eject, but the second then finds "no disc loaded" and gets
+  misread as a new one arriving, showing "reading disc..." after a plain eject with nothing
+  inserted. `DiscMonitor._run()` now just treats any bare `change` event as eject,
+  unconditionally, which is what it did before this was attempted. Don't reintroduce
+  disambiguation based on this event stream without a fundamentally different signal (e.g.
+  actively polling the drive's own SCSI "unit ready" status instead of waiting on a kernel
+  event that isn't guaranteed to arrive) — see `project_disc_insert_placeholder.md` in memory
+  for the full investigation if picking this back up.
 
 

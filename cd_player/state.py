@@ -39,13 +39,6 @@ class PlayerStateMachine:
         self._state = PlayerState.STOPPED
         self._toc: DiscToc | None = None
         self._metadata: DiscMetadata | None = None
-        # Set while a disc is physically spinning up in the drive, after the
-        # kernel notices *something* changed but before it can report a
-        # readable TOC (that gap is drive/firmware spin-up time, commonly
-        # 10+ seconds for audio CDs on this hardware -- see CLAUDE.md).
-        # Purely a UI hint ("reading disc...") -- has_disc/track bounds are
-        # unaffected until set_disc() actually lands.
-        self._identifying = False
         self._current_track_number: int | None = None
         self._current_track_duration_seconds: float | None = None
         # Only Sonos knows actual playback position (audio is streamed
@@ -88,25 +81,8 @@ class PlayerStateMachine:
             self._teardown_all_sessions()
             self._toc = toc
             self._metadata = metadata
-            self._identifying = False
             self._reset_playback_position()
             self._state = PlayerState.STOPPED
-
-    def begin_identifying(self) -> None:
-        """Called by the disc monitor the moment the drive shows *any* sign
-        of activity (before it can report a TOC), so the UI can show
-        something during the drive's own spin-up time instead of a blank
-        screen. A no-op if a disc is already loaded -- that signal means an
-        eject, not a new disc arriving (see DiscMonitor._run()).
-        """
-        with self._lock:
-            if self._toc is not None:
-                return
-            self._identifying = True
-
-    def has_disc(self) -> bool:
-        with self._lock:
-            return self._toc is not None
 
     def update_metadata(self, disc_id: str, metadata: DiscMetadata) -> None:
         """Fills in metadata resolved asynchronously (MusicBrainz/cover art)
@@ -166,7 +142,6 @@ class PlayerStateMachine:
             self._teardown_all_sessions()
             self._toc = None
             self._metadata = None
-            self._identifying = False
             self._reset_playback_position()
             self._state = PlayerState.STOPPED
             eject_tray(self._config.cd_device_path)
@@ -233,7 +208,6 @@ class PlayerStateMachine:
             return {
                 "state": self._state.value,
                 "has_disc": self._toc is not None,
-                "is_identifying": self._identifying,
                 "current_track_number": self._current_track_number,
                 "elapsed_seconds": self._elapsed_seconds,
                 "track_duration_seconds": self._current_track_duration_seconds,

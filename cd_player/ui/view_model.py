@@ -13,7 +13,6 @@ _ACTIVE_STATES = ("playing", "paused")
 @dataclass(frozen=True)
 class ViewState:
     has_disc: bool
-    is_identifying: bool
     player_state: str  # "stopped" / "playing" / "paused"
     disc_title: str | None
     disc_artist: str | None
@@ -97,7 +96,6 @@ def view_state_from_status(status: dict) -> ViewState:
 
     return ViewState(
         has_disc=status["has_disc"],
-        is_identifying=status.get("is_identifying", False),
         player_state=status["state"],
         disc_title=disc["title"] if disc is not None else None,
         disc_artist=disc["artist"] if disc is not None else None,

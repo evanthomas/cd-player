@@ -12,28 +12,6 @@ def test_no_disc_is_black_screen_state():
     assert view.current_track_title is None
 
 
-def test_is_identifying_maps_from_status():
-    status = {
-        "state": "stopped",
-        "has_disc": False,
-        "is_identifying": True,
-        "current_track_number": None,
-        "disc": None,
-    }
-
-    view = view_state_from_status(status)
-
-    assert view.is_identifying is True
-
-
-def test_is_identifying_defaults_false_when_missing():
-    status = {"state": "stopped", "has_disc": False, "current_track_number": None, "disc": None}
-
-    view = view_state_from_status(status)
-
-    assert view.is_identifying is False
-
-
 def test_disc_with_metadata_resolves_current_track_title():
     status = {
         "state": "playing",
