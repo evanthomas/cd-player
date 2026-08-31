@@ -12,8 +12,55 @@ import enum
 import logging
 import os
 import threading
+import time
+from pathlib import Path
+
+from cd_player.ui.screen_blank import ScreenBlankTracker
 
 logger = logging.getLogger(__name__)
+
+
+class Backlight:
+    """Wraps the touchscreen's sysfs backlight brightness file so the
+    screen can be physically blanked/woken, not just rendered black --
+    see CLAUDE.md's screen-blanking note for why (it's a real power-off,
+    and the existing has_disc=False rendering already draws black without
+    this). Remembers whatever brightness was already configured at
+    startup so waking restores it exactly, rather than assuming a fixed
+    value.
+    """
+
+    def __init__(self, path: str):
+        self._path = Path(path)
+        self._normal_brightness = self._read()
+        if self._normal_brightness is None:
+            logger.warning(
+                "could not read backlight brightness at %s -- screen blanking disabled", path
+            )
+
+    @property
+    def available(self) -> bool:
+        return self._normal_brightness is not None
+
+    def _read(self) -> int | None:
+        try:
+            return int(self._path.read_text().strip())
+        except OSError:
+            return None
+
+    def _write(self, value: int) -> None:
+        try:
+            self._path.write_text(str(value))
+        except OSError:
+            logger.exception("failed to set backlight brightness at %s", self._path)
+
+    def blank(self) -> None:
+        if self.available:
+            self._write(0)
+
+    def wake(self) -> None:
+        if self.available:
+            self._write(self._normal_brightness)
 
 
 class Screen(enum.Enum):
@@ -105,6 +152,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=1.0,
         help="Seconds between GET /status polls (default: %(default)s)",
     )
+    parser.add_argument(
+        "--screen-blank-seconds",
+        type=float,
+        default=300.0,
+        help="Seconds of no touch activity before blanking the screen, while a disc is "
+        "loaded but not playing. Wakes on a touch, a new disc being loaded, or playback "
+        "starting (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--backlight-path",
+        default="/sys/class/backlight/panel_backlight@1/brightness",
+        help="sysfs brightness file for the touchscreen backlight, used to blank/wake the "
+        "screen. Depends on the specific panel/driver -- verify against the real hardware "
+        "(default: %(default)s)",
+    )
     return parser
 
 
@@ -146,6 +208,11 @@ def main(argv: list[str] | None = None) -> None:
 
     renderer = Renderer()
     clock = pygame.time.Clock()
+
+    backlight = Backlight(args.backlight_path)
+    blank_tracker = ScreenBlankTracker(args.screen_blank_seconds)
+    blank_tracker.note_activity(time.monotonic())
+    is_blanked = False
 
     actions = {
         "play": client.play,
@@ -251,42 +318,75 @@ def main(argv: list[str] | None = None) -> None:
             level = volume_from_slider_x(settings_layout.volume_slider_rect, canvas_point[0])
             volume_sender.end_drag(level)
 
+    touch_event_types = (
+        pygame.MOUSEBUTTONDOWN,
+        pygame.MOUSEBUTTONUP,
+        pygame.MOUSEMOTION,
+        pygame.FINGERDOWN,
+        pygame.FINGERUP,
+        pygame.FINGERMOTION,
+    )
+    had_disc = poller.view.has_disc
+
     running = True
     try:
         while running:
+            now = time.monotonic()
+
+            # A new disc counts as activity even with no touch involved
+            # (e.g. auto-play), so the screen doesn't stay blanked through
+            # a fresh insert.
+            if poller.view.has_disc and not had_disc:
+                blank_tracker.note_activity(now)
+            had_disc = poller.view.has_disc
+
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
                 elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.type == pygame.MOUSEBUTTONDOWN:
-                    handle_press(event.pos)
-                elif event.type == pygame.MOUSEBUTTONUP:
-                    handle_release(event.pos)
-                elif event.type == pygame.MOUSEMOTION:
-                    handle_motion(event.pos)
-                elif event.type == pygame.FINGERDOWN:
-                    handle_press(
-                        (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
-                    )
-                elif event.type == pygame.FINGERUP:
-                    handle_release(
-                        (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
-                    )
-                elif event.type == pygame.FINGERMOTION:
-                    handle_motion(
-                        (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
-                    )
+                elif event.type in touch_event_types:
+                    blank_tracker.note_activity(now)
+                    if is_blanked:
+                        # First touch after blanking just wakes the screen
+                        # -- don't act on a button the user couldn't see.
+                        continue
+                    if event.type == pygame.MOUSEBUTTONDOWN:
+                        handle_press(event.pos)
+                    elif event.type == pygame.MOUSEBUTTONUP:
+                        handle_release(event.pos)
+                    elif event.type == pygame.MOUSEMOTION:
+                        handle_motion(event.pos)
+                    elif event.type == pygame.FINGERDOWN:
+                        handle_press(
+                            (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
+                        )
+                    elif event.type == pygame.FINGERUP:
+                        handle_release(
+                            (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
+                        )
+                    elif event.type == pygame.FINGERMOTION:
+                        handle_motion(
+                            (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
+                        )
 
-            if current_screen == Screen.NOW_PLAYING:
-                renderer.render(canvas, poller.view, layout, pressed_button)
-            else:
-                renderer.render_settings(
-                    canvas, poller.view, settings_layout, available_speakers, scanning
-                )
-            rotated = pygame.transform.rotate(canvas, args.rotate)
-            display.blit(rotated, (0, 0))
-            pygame.display.flip()
+            should_blank = blank_tracker.update(
+                now, poller.view.has_disc, poller.view.player_state == "playing"
+            )
+            if should_blank != is_blanked:
+                backlight.blank() if should_blank else backlight.wake()
+                is_blanked = should_blank
+
+            if not is_blanked:
+                if current_screen == Screen.NOW_PLAYING:
+                    renderer.render(canvas, poller.view, layout, pressed_button)
+                else:
+                    renderer.render_settings(
+                        canvas, poller.view, settings_layout, available_speakers, scanning
+                    )
+                rotated = pygame.transform.rotate(canvas, args.rotate)
+                display.blit(rotated, (0, 0))
+                pygame.display.flip()
             clock.tick(30)
     finally:
         poller.stop()
