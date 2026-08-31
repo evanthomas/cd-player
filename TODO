@@ -3,7 +3,6 @@
 - Show all tracks with the active track highlighted
 - Improve the speakers and volume screen
 - Poor feedback when skipping; volume slider
-- Auto play when a CD is loaded
 - Turn of screen after a few minutes of inactivity
 - Respond to pause/play/stop events from the sonos app
 

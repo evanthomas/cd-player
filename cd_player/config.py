@@ -22,6 +22,7 @@ class Config:
     bind_port: int
     stream_base_url: str
     sonos_poll_interval_seconds: float
+    auto_play: bool = False
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -83,6 +84,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Seconds between polls of Sonos's own transport state, used to detect "
         "play/pause triggered from the Sonos app itself (default: %(default)s)",
     )
+    parser.add_argument(
+        "--auto-play",
+        action="store_true",
+        help="Start playback automatically as soon as a disc is identified, instead of "
+        "requiring an explicit play command. Off by default.",
+    )
     return parser
 
 
@@ -97,6 +104,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         bind_port=args.bind_port,
         stream_base_url=f"http://{args.advertise_host}:{args.bind_port}",
         sonos_poll_interval_seconds=args.sonos_poll_interval,
+        auto_play=args.auto_play,
     )
 
 

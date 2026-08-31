@@ -54,8 +54,12 @@ freed up), so end-of-track auto-advance is gapless — but never two tracks at o
 one physical drive can't be read by two `cdparanoia` processes concurrently.
 
 `disc/monitor.py`'s `DiscMonitor` watches the drive via `pyudev` and drives disc
-identification on insert/eject; it never starts playback itself (that's always an explicit
-REST `play`). On insert it reads the TOC (`disc/toc.py` — fast, local, ~150ms measured) and
+identification on insert/eject; by default it never starts playback itself (that's always an
+explicit REST `play`) — pass `--auto-play` to have it call `player.play()` itself once a
+disc's metadata resolves. A `RuntimeError` there (e.g. no speakers selected) is caught and
+logged, leaving the disc loaded-but-stopped, same as if auto-play were off; any other error
+is also caught, never left to kill the monitor thread and stop future disc detection.
+On insert it reads the TOC (`disc/toc.py` — fast, local, ~150ms measured) and
 registers it with `PlayerStateMachine.set_disc(toc, None)` immediately, so `has_disc`/track
 bounds/Play are available right away rather than waiting on the metadata lookup below.
 It then checks `metadata/cache.py`'s SQLite cache by disc ID, and on a miss queries

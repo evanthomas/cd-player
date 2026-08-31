@@ -29,6 +29,7 @@ def create_app(argv: list[str] | None = None) -> tuple[Flask, SonosPoller, DiscM
         artwork_cache_dir=config.artwork_cache_dir,
         cache=cache,
         player=player,
+        auto_play=config.auto_play,
     )
     poller = SonosPoller(sonos, player, config.sonos_poll_interval_seconds)
 

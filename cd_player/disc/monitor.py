@@ -1,6 +1,7 @@
 """Watches the optical drive for insert/eject via udev and drives metadata
-lookup + player state on each event. Never starts playback itself -- that
-only ever happens via an explicit REST `play` call.
+lookup + player state on each event. Only starts playback itself when
+`auto_play` is enabled (off by default) -- otherwise that's always an
+explicit REST `play` call.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ class DiscMonitor:
         artwork_cache_dir: str,
         cache: MetadataCache,
         player: PlayerStateMachine,
+        auto_play: bool = False,
     ):
         self._device_path = device_path
         # udev events report the canonical /dev/srN node, never the by-id
@@ -36,6 +38,7 @@ class DiscMonitor:
         self._artwork_cache_dir = artwork_cache_dir
         self._cache = cache
         self._player = player
+        self._auto_play = auto_play
         self._context = pyudev.Context()
         self._monitor = pyudev.Monitor.from_netlink(self._context)
         self._monitor.filter_by(subsystem="block")
@@ -125,6 +128,20 @@ class DiscMonitor:
 
         if metadata is not None:
             self._player.update_metadata(disc_toc.disc_id, metadata)
+
+        if self._auto_play:
+            # Waits until metadata resolves (or fails to) so the track title
+            # sent to Sonos is correct from the first frame, rather than
+            # starting on the "Track N" fallback and never correcting it --
+            # Sonos gets that title once, in the initial play_uri() call.
+            try:
+                self._player.play()
+            except RuntimeError as exc:
+                # Expected, not a bug -- e.g. no speakers selected. Leave
+                # the disc loaded but stopped, same as auto-play being off.
+                logger.warning("auto-play skipped for %s: %s", disc_toc.disc_id, exc)
+            except Exception:
+                logger.exception("auto-play failed for %s", disc_toc.disc_id)
 
     def _handle_eject(self) -> None:
         logger.info("disc ejected from %s", self._device_path)

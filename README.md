@@ -64,6 +64,7 @@ Run `cd-player --help` for the full list.
 | `--bind-host` | no | `0.0.0.0` | Interface the REST/streaming server binds to |
 | `--bind-port` | no | `8080` | Port for the REST/streaming server |
 | `--sonos-poll-interval` | no | `1.5` | Seconds between polls of Sonos's own transport state, used to detect play/pause triggered from the Sonos app itself |
+| `--auto-play` | no | off | Start playback automatically as soon as a disc is identified, instead of requiring an explicit `play` command |
 
 The default `--db-path`/`--artwork-dir` live under `/var/lib`, which typically needs root
 to create. Either run as a systemd service with a `StateDirectory=`, or point both at a
@@ -86,8 +87,9 @@ mkdir -p ~/.local/share/cd-player/artwork
   --device-path /dev/disk/by-id/usb-...
 ```
 
-Inserting a disc only triggers identification (TOC read + metadata lookup) — it never
-starts playback on its own. Playback always starts from an explicit `play` command.
+Inserting a disc only triggers identification (TOC read + metadata lookup) — by default it
+never starts playback on its own, and playback starts from an explicit `play` command. Pass
+`--auto-play` to start playback automatically as soon as a disc is identified instead.
 
 ## Touchscreen UI
 
