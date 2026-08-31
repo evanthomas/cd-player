@@ -15,6 +15,7 @@ import threading
 import time
 from pathlib import Path
 
+from cd_player.ui.no_disc_message import NoDiscMessageTracker
 from cd_player.ui.screen_blank import ScreenBlankTracker
 
 logger = logging.getLogger(__name__)
@@ -167,6 +168,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "screen. Depends on the specific panel/driver -- verify against the real hardware "
         "(default: %(default)s)",
     )
+    parser.add_argument(
+        "--no-disc-message-seconds",
+        type=float,
+        default=5.0,
+        help="Seconds to show a 'Please load a CD' message after a touch while no disc is "
+        "loaded (default: %(default)s)",
+    )
     return parser
 
 
@@ -213,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
     blank_tracker = ScreenBlankTracker(args.screen_blank_seconds)
     blank_tracker.note_activity(time.monotonic())
     is_blanked = False
+    no_disc_message = NoDiscMessageTracker(args.no_disc_message_seconds)
 
     actions = {
         "play": client.play,
@@ -347,6 +356,7 @@ def main(argv: list[str] | None = None) -> None:
                     running = False
                 elif event.type in touch_event_types:
                     blank_tracker.note_activity(now)
+                    no_disc_message.note_touch(now, poller.view.has_disc)
                     if is_blanked:
                         # First touch after blanking just wakes the screen
                         # -- don't act on a button the user couldn't see.
@@ -379,7 +389,10 @@ def main(argv: list[str] | None = None) -> None:
 
             if not is_blanked:
                 if current_screen == Screen.NOW_PLAYING:
-                    renderer.render(canvas, poller.view, layout, pressed_button)
+                    show_no_disc_message = no_disc_message.should_show(now, poller.view.has_disc)
+                    renderer.render(
+                        canvas, poller.view, layout, pressed_button, show_no_disc_message
+                    )
                 else:
                     renderer.render_settings(
                         canvas, poller.view, settings_layout, available_speakers, scanning

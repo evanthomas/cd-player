@@ -4,7 +4,6 @@
 - Improve the speakers and volume screen
 - Poor feedback when skipping; volume slider
 - Respond to pause/play/stop events from the sonos app
-- When no CD is loaded and a user taps the screen, a "Load CD" message should appear for 5 secs.
 
 ## Too hard
 - Long delay after inseting the CD before the UI appears

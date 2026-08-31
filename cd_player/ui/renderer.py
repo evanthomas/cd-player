@@ -40,14 +40,23 @@ class Renderer:
         view: ViewState,
         layout: Layout,
         pressed_button: str | None = None,
+        show_no_disc_message: bool = False,
     ) -> None:
         canvas.fill(BLACK)
         if not view.has_disc:
+            if show_no_disc_message:
+                self._draw_no_disc_message(canvas, layout)
             return
 
         self._draw_artwork(canvas, view, layout)
         self._draw_text(canvas, view, layout)
         self._draw_buttons(canvas, view, layout, pressed_button)
+
+    def _draw_no_disc_message(self, canvas: pygame.Surface, layout: Layout) -> None:
+        # Local UI state, not from /status -- see ui/no_disc_message.py.
+        x, y, w, h = layout.text_rect
+        surf = self._title_font.render("Please load a CD", True, DIM)
+        canvas.blit(surf, (x + (w - surf.get_width()) // 2, y + (h - surf.get_height()) // 2))
 
     def _draw_artwork(self, canvas: pygame.Surface, view: ViewState, layout: Layout) -> None:
         x, y, w, h = layout.artwork_rect
