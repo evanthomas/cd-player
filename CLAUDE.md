@@ -55,11 +55,29 @@ one physical drive can't be read by two `cdparanoia` processes concurrently.
 
 `disc/monitor.py`'s `DiscMonitor` watches the drive via `pyudev` and drives disc
 identification on insert/eject; it never starts playback itself (that's always an explicit
-REST `play`). On insert it reads the TOC (`disc/toc.py`), checks `metadata/cache.py`'s
-SQLite cache by disc ID, and on a miss queries MusicBrainz + the Cover Art Archive
-(`metadata/musicbrainz.py`, `metadata/coverart.py`) before handing the TOC and metadata to
-`PlayerStateMachine.set_disc()`. `main.py`'s `create_app()` is where all of this — state
-machine, registry, controller, monitor, poller, Flask blueprints — gets wired together.
+REST `play`). On insert it reads the TOC (`disc/toc.py` — fast, local, ~150ms measured) and
+registers it with `PlayerStateMachine.set_disc(toc, None)` immediately, so `has_disc`/track
+bounds/Play are available right away rather than waiting on the metadata lookup below.
+It then checks `metadata/cache.py`'s SQLite cache by disc ID, and on a miss queries
+MusicBrainz + the Cover Art Archive (`metadata/musicbrainz.py`, `metadata/coverart.py`) —
+these are network round-trips that can take several seconds — before handing the result to
+`PlayerStateMachine.update_metadata()`, which fills in the title/artist/artwork without
+touching playback state (unlike `set_disc()`, which unconditionally stops Sonos and resets
+position — safe for a real insert/eject, wrong for patching in metadata after the fact).
+`main.py`'s `create_app()` is where all of this — state machine, registry, controller,
+monitor, poller, Flask blueprints — gets wired together.
+
+`DiscMonitor` tracks disc presence itself (`self._disc_present`), separately from
+`PlayerStateMachine`'s own state, specifically to disambiguate the udev event stream: a bare
+`change` event with no `ID_CDROM_MEDIA` fires for two physically distinct things — a real
+eject, or the drive announcing activity before it's spun up enough to read a TOC. Only a
+disc that was actually loaded can be ejected, so whichever one it is depends on whether a
+disc was already present. That can't be read from `PlayerStateMachine.has_disc()`, though:
+a REST-triggered `eject()` clears it immediately (so `/status` is consistent for the caller
+right away), before the drive's own confirming udev event has even arrived — so asking the
+player would make that harmless, expected confirmation look like a new disc arriving.
+`DiscMonitor` keeping its own bit, updated only from events it has itself processed, avoids
+that race.
 
 `cd_player/ui/` is `cd-player-ui`, a separate process/console script rendering a landscape
 touch UI straight to the DRM/KMS framebuffer (SDL2's `kmsdrm` video driver — no X11/Wayland
@@ -259,5 +277,15 @@ together would undo that.
   progress. Fixing (2) means rendering from a local optimistic value during an active drag,
   falling back to the polled `ViewState.volume` on release — deliberately left as follow-up
   UI polish rather than fixed alongside the initial feature.
+- **The perceived lag between inserting a disc and the UI showing anything is dominated by
+  the drive's own spin-up time, not app code.** Measured directly (2026-08-31): the app-level
+  path (TOC read + `set_disc()`) takes ~150-300ms once the kernel reports readable media, but
+  the kernel doesn't report it until the drive has finished spinning up and reading its own
+  TOC internally — measured at 13-16 seconds on this hardware, confirmed independent of
+  whether the disc needs a MusicBrainz/cover-art lookup (a miss and a hit-with-artwork showed
+  the same total delay). That gap is entirely below the OS and can't be shortened from
+  `cd_player`. Don't re-diagnose "slow disc insert" as a metadata/network problem without
+  measuring where the time actually goes first (`udevadm monitor --udev --property
+  --subsystem-match=block` against the drive, correlated with `has_disc` in `/status`).
 
 
