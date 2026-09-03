@@ -177,9 +177,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--screen-blank-seconds",
         type=float,
         default=300.0,
-        help="Seconds of no touch activity before blanking the screen, while a disc is "
-        "loaded but not playing. Wakes on a touch, a new disc being loaded, or playback "
-        "starting (default: %(default)s)",
+        help="Seconds of no touch activity before blanking the screen whenever nothing "
+        "is playing (no disc, or a disc sitting stopped/paused). Wakes on a touch, a new "
+        "disc being loaded, or playback starting (default: %(default)s)",
     )
     parser.add_argument(
         "--backlight-path",
@@ -400,9 +400,7 @@ def main(argv: list[str] | None = None) -> None:
                             (int(event.x * physical_size[0]), int(event.y * physical_size[1]))
                         )
 
-            should_blank = blank_tracker.update(
-                now, poller.view.has_disc, poller.view.player_state == "playing"
-            )
+            should_blank = blank_tracker.update(now, poller.view.player_state == "playing")
             if should_blank != is_blanked:
                 # Only adopt the new state if the hardware write actually
                 # succeeded -- otherwise retry next frame, rather than app

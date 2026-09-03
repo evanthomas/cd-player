@@ -110,13 +110,19 @@ at boot. It's a REST client like any other: it polls `GET /status` and calls the
 | `--api-base-url` | `http://localhost:8080` | Base URL of the `cd-player` REST API |
 | `--rotate` | `270` | Degrees (counterclockwise) to rotate the rendered UI onto the physical panel. Depends on the physical mounting orientation, not just the panel's native portrait mode; verify against the real screen -- taps landing on the wrong button means this needs adjusting |
 | `--poll-interval` | `1.0` | Seconds between `/status` polls |
+| `--screen-blank-seconds` | `300` | Seconds of no touch activity before powering the backlight off, whenever nothing is playing (no disc, or a disc sitting stopped/paused). Wakes on a touch, a new disc, or playback starting; the waking touch is not also acted on |
+| `--backlight-path` | `/sys/class/backlight/panel_backlight@1/brightness` | sysfs brightness file used to blank/wake the screen; depends on the panel/driver |
+| `--no-disc-message-seconds` | `5` | Seconds to show "Please load a CD" after a touch while no disc is loaded |
 
-Behavior: black screen with no disc loaded; once a disc is loaded, shows cover art,
-title/artist/track with elapsed/total time (filled in asynchronously as `/status` picks up
-MusicBrainz/Cover Art Archive data and Sonos's playback position), and
-skip-back/play/pause/skip-forward/eject/settings buttons -- each of the playback buttons
-dimmed and inert whenever it wouldn't do anything (e.g. play while already playing,
-skip-forward on the last track). Icons are drawn procedurally (no image assets to load).
+Behavior: black screen with no disc loaded (tapping it shows "Please load a CD" briefly);
+once a disc is loaded, shows cover art, title/artist/track with elapsed/total time (filled
+in asynchronously as `/status` picks up MusicBrainz/Cover Art Archive data and Sonos's
+playback position), and skip-back/play/pause/skip-forward/eject/settings buttons -- each of
+the playback buttons dimmed and inert whenever it wouldn't do anything (e.g. play while
+already playing, skip-forward on the last track). Icons are drawn procedurally (no image
+assets to load). Long track titles scroll rather than truncate. After
+`--screen-blank-seconds` of no touches with nothing playing, the backlight is powered off
+entirely.
 
 The gear icon opens a settings screen listing every Sonos speaker autodiscovered on the
 LAN as a checkbox (checking more than one plays audio to all of them in sync, a normal
