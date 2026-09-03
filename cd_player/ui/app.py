@@ -29,39 +29,59 @@ class Backlight:
     this). Remembers whatever brightness was already configured at
     startup so waking restores it exactly, rather than assuming a fixed
     value.
+
+    If brightness reads 0 at startup, the previous process died while
+    blanked (this service runs with Restart=on-failure) -- adopting 0 as
+    "normal" would make wake() a no-op and leave the screen dark forever,
+    so fall back to half of max_brightness instead (the panel's stock
+    default on this hardware).
     """
 
     def __init__(self, path: str):
         self._path = Path(path)
-        self._normal_brightness = self._read()
+        self._normal_brightness = self._read(self._path)
         if self._normal_brightness is None:
             logger.warning(
                 "could not read backlight brightness at %s -- screen blanking disabled", path
             )
+        elif self._normal_brightness == 0:
+            max_brightness = self._read(self._path.parent / "max_brightness")
+            self._normal_brightness = max(1, (max_brightness or 2) // 2)
+            logger.warning(
+                "backlight was 0 at startup (previous process likely died while "
+                "blanked) -- using %d as normal brightness and waking now",
+                self._normal_brightness,
+            )
+            self.wake()
 
     @property
     def available(self) -> bool:
         return self._normal_brightness is not None
 
-    def _read(self) -> int | None:
+    @staticmethod
+    def _read(path: Path) -> int | None:
         try:
-            return int(self._path.read_text().strip())
-        except OSError:
+            return int(path.read_text().strip())
+        except (OSError, ValueError):
             return None
 
-    def _write(self, value: int) -> None:
+    def _write(self, value: int) -> bool:
         try:
             self._path.write_text(str(value))
         except OSError:
             logger.exception("failed to set backlight brightness at %s", self._path)
+            return False
+        return True
 
-    def blank(self) -> None:
-        if self.available:
-            self._write(0)
+    def blank(self) -> bool:
+        """Returns whether the write actually happened -- the caller must
+        not consider the screen blanked (and start swallowing touches) if
+        it didn't, or app state desyncs from the physical panel until the
+        next transition."""
+        return self.available and self._write(0)
 
-    def wake(self) -> None:
-        if self.available:
-            self._write(self._normal_brightness)
+    def wake(self) -> bool:
+        return self.available and self._write(self._normal_brightness)
 
 
 class Screen(enum.Enum):
@@ -384,8 +404,14 @@ def main(argv: list[str] | None = None) -> None:
                 now, poller.view.has_disc, poller.view.player_state == "playing"
             )
             if should_blank != is_blanked:
-                backlight.blank() if should_blank else backlight.wake()
-                is_blanked = should_blank
+                # Only adopt the new state if the hardware write actually
+                # succeeded -- otherwise retry next frame, rather than app
+                # state desyncing from the physical panel (a "blanked" flag
+                # on a still-lit screen swallows touches; an "awake" flag on
+                # a dark screen sends the first tap to an invisible button).
+                written = backlight.blank() if should_blank else backlight.wake()
+                if written:
+                    is_blanked = should_blank
 
             if not is_blanked:
                 if current_screen == Screen.NOW_PLAYING:
