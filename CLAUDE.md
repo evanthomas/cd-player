@@ -251,8 +251,16 @@ together would undo that.
   `_start_track()`, on the "we initiated this" path) — producing a live but internally
   inconsistent `{"state": "playing", "current_track_number": null}`. Reproduced 2026-08-20:
   looked like "play starts on the wrong track" from `cd-player-ui` when it was really a
-  leftover stream from an earlier dev-restart. `POST /stop` recovers cleanly. Not yet fixed;
-  `on_sonos_state()` needs to either ignore a learned PLAYING with no known track, or map it back to a real track from Sonos's reported position/URI.
+  leftover stream from an earlier dev-restart. Fixed 2026-09-05: `on_sonos_state()` now
+  ignores a learned PLAYING while `_current_track_number is None` — a PLAYING report when we
+  never started a track can't be our playback. The fix mattered beyond dev restarts: with a
+  **home-theatre Sonos as coordinator, the TV/SPDIF input reports transport `PLAYING` the
+  whole time the TV is on** (URI `x-sonos-htastream:...:spdif`), so cd-player sat stuck
+  "playing" for hours whenever a disc was in the tray — which surfaced as "the touchscreen
+  never blanks" (blanking is deliberately suppressed while playing). The same TV input also
+  reports position as `NOT_IMPLEMENTED`, not `H:MM:SS` — `get_position_seconds()` returns
+  None for that (and `SonosPoller` skips the tick's position update) instead of raising,
+  which had been dumping two tracebacks per second into the journal.
 - **Multi-speaker grouping was verified against 3 real Sonos speakers (2026-08-27)**:
   hard-stop-before-unjoin does actually silence a dropped speaker (confirmed via direct
   `soco` query — `STOPPED`, empty `CurrentURI`, standalone coordinator of itself); the
