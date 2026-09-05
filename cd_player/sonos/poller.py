@@ -46,7 +46,9 @@ class SonosPoller:
                 state = self._sonos.get_transport_state()
                 self._player.on_sonos_state(state)
                 if state in ("PLAYING", "PAUSED_PLAYBACK"):
-                    self._player.on_sonos_position(self._sonos.get_position_seconds())
+                    position = self._sonos.get_position_seconds()
+                    if position is not None:
+                        self._player.on_sonos_position(position)
                 self._player.on_sonos_volume(self._sonos.get_volume())
                 self._player.maybe_start_prerip()
             except Exception:

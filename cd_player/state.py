@@ -249,6 +249,17 @@ class PlayerStateMachine:
             if self._toc is None or not self._sonos.has_selection():
                 return
             if sonos_state == "PLAYING":
+                if self._current_track_number is None:
+                    # A PLAYING report when we never started a track can't
+                    # be our playback -- it's the coordinator playing
+                    # something else entirely (e.g. a home-theatre
+                    # speaker's TV input, which reports PLAYING the whole
+                    # time the TV is on) or a leftover stream from a
+                    # previous cd-player process. Adopting it produced a
+                    # stuck {"state": "playing", "current_track_number":
+                    # null} that, among other things, kept the touchscreen
+                    # from ever blanking.
+                    return
                 self._pending_stop_confirmations = 0
                 self._state = PlayerState.PLAYING
             elif sonos_state == "PAUSED_PLAYBACK":

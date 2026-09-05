@@ -480,6 +480,34 @@ def test_on_sonos_state_ignored_when_no_selection():
     assert player.status()["state"] == "stopped"
 
 
+def test_learned_playing_with_no_started_track_is_ignored():
+    # The coordinator reporting PLAYING when we never started a track is
+    # someone else's audio (e.g. a home-theatre speaker's TV input) or a
+    # leftover stream from a previous process -- adopting it used to
+    # produce a stuck {"state": "playing", "current_track_number": null}.
+    player, _sonos = make_player()
+    player.set_disc(make_toc(), None)
+
+    player.on_sonos_state("PLAYING")
+
+    status = player.status()
+    assert status["state"] == "stopped"
+    assert status["current_track_number"] is None
+
+
+def test_learned_playing_still_resumes_a_paused_track():
+    player, sonos = make_player()
+    player.set_disc(make_toc(), None)
+    player.play()
+    player.pause()
+    sonos.calls.clear()
+
+    player.on_sonos_state("PLAYING")  # e.g. resumed from the Sonos app
+
+    assert player.status()["state"] == "playing"
+    assert sonos.calls == []  # learned, not re-issued
+
+
 def test_volume_passthrough():
     player, sonos = make_player()
 

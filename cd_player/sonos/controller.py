@@ -207,12 +207,19 @@ class SonosController:
         coordinator = self._require_coordinator()
         return coordinator.get_current_transport_info()["current_transport_state"]
 
-    def get_position_seconds(self) -> float:
+    def get_position_seconds(self) -> float | None:
         """Elapsed playback position within the current track, per Sonos --
         we only know the track's total length ourselves (from the disc
-        TOC); how far into it Sonos actually is requires asking Sonos."""
+        TOC); how far into it Sonos actually is requires asking Sonos.
+
+        Returns None when the coordinator is playing non-track content
+        (e.g. a home-theatre speaker's TV/SPDIF input), which reports
+        position as 'NOT_IMPLEMENTED' rather than 'H:MM:SS'."""
         coordinator = self._require_coordinator()
-        return _parse_duration(coordinator.get_current_track_info()["position"])
+        position = coordinator.get_current_track_info()["position"]
+        if ":" not in position:
+            return None
+        return _parse_duration(position)
 
     def _require_coordinator(self) -> soco.SoCo:
         # Snapshot the coordinator reference under the lock, then release it
