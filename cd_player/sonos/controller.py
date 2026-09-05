@@ -189,9 +189,26 @@ class SonosController:
     # -- transport (all target the group coordinator, self._selected[0]) ------
 
     def play_uri(self, url: str, title: str = "", duration_seconds: float = 0.0) -> None:
-        coordinator = self._require_coordinator()
+        coordinator, members = self._snapshot_selection()
+        self._ensure_members_joined(coordinator, members)
         meta = _build_track_metadata(title, url, duration_seconds)
         coordinator.play_uri(url, meta=meta)
+
+    def _ensure_members_joined(
+        self, coordinator: soco.SoCo, members: list[soco.SoCo]
+    ) -> None:
+        """Re-form the group before starting fresh playback -- stop()
+        releases grouped members so a stopped appliance doesn't keep
+        holding speakers, so play must join them back. Checking each
+        member's actual current group (rather than trusting our own
+        bookkeeping) also heals a member pulled out of the group
+        externally, e.g. regrouped from the Sonos app."""
+        for member in members:
+            try:
+                if member.group.coordinator.uid != coordinator.uid:
+                    member.join(coordinator)
+            except Exception:
+                logger.exception("failed to join %s to the group", member.player_name)
 
     def play(self) -> None:
         self._require_coordinator().play()
@@ -200,7 +217,18 @@ class SonosController:
         self._require_coordinator().pause()
 
     def stop(self) -> None:
-        self._hard_stop(self._require_coordinator())
+        """Hard-stop the coordinator and release any other grouped members
+        back to standalone -- 'stopped' for this appliance means the
+        speakers are free again (for the Sonos app, or a home-theatre
+        speaker's TV input), not just silent. play_uri() re-forms the
+        group on the next playback."""
+        coordinator, members = self._snapshot_selection()
+        self._hard_stop(coordinator)
+        for member in members:
+            try:
+                member.unjoin()
+            except Exception:
+                logger.exception("failed to unjoin %s", member.player_name)
 
     def get_transport_state(self) -> str:
         """One of 'PLAYING', 'PAUSED_PLAYBACK', 'STOPPED', 'TRANSITIONING', ..."""
@@ -230,3 +258,11 @@ class SonosController:
             if not self._selected:
                 raise RuntimeError("no speakers selected")
             return self._selected[0]
+
+    def _snapshot_selection(self) -> tuple[soco.SoCo, list[soco.SoCo]]:
+        """(coordinator, other members) -- same locking pattern as
+        _require_coordinator, for callers that touch the whole group."""
+        with self._lock:
+            if not self._selected:
+                raise RuntimeError("no speakers selected")
+            return self._selected[0], list(self._selected[1:])

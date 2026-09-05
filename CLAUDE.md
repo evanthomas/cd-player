@@ -120,6 +120,14 @@ only picks a new one when the current coordinator is actually deselected — so 
 removing other speakers never disrupts ongoing playback with a needless handoff. Selection
 is runtime-mutable (via the touchscreen's settings screen / `POST /speakers`) but never
 persisted: `--speaker-name`'s speaker is always the sole starting selection on boot.
+`SonosController.stop()` doesn't just silence the coordinator: it clears the loaded URI (see
+Gotchas) *and* unjoins any other selected members — "stopped" means the speakers are
+released for other uses (the Sonos app, a home-theatre coordinator's TV audio), not merely
+silent. Every teardown path funnels through it: explicit stop, eject, disc swap, the pause
+timeout, and end-of-disc (`_on_stopped_externally` sends it even though Sonos already went
+idle on its own). The runtime *selection* survives a stop — `play_uri()` re-forms the group
+from it, checking each member's real current group rather than trusting our bookkeeping, so
+it also heals a member regrouped externally while we were stopped.
 `PlayerStateMachine.set_selected_speakers()` handles the harder case — the coordinator
 changing identity while a track is PLAYING/PAUSED — by reissuing `play_uri` to the new
 coordinator and `seek()`ing back to the last known position (best-effort; a seek failure is

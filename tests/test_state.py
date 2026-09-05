@@ -249,17 +249,22 @@ def test_prerip_and_gapless_auto_advance():
 
 
 def test_auto_advance_stops_at_end_of_disc():
-    player, _sonos = make_player()
+    player, sonos = make_player()
     player.set_disc(make_toc(2), None)
     player.play()
     player.skip_forward()
     assert player.status()["current_track_number"] == 2
+    sonos.calls.clear()
 
     player.on_sonos_state("STOPPED")
     player.on_sonos_state("STOPPED")
 
     assert player.status()["state"] == "stopped"
     assert player.status()["current_track_number"] is None
+    # End-of-disc must issue our own stop even though Sonos already went
+    # idle by itself: SonosController.stop() is what clears the stale
+    # CurrentURI and releases grouped members back to standalone.
+    assert ("stop",) in sonos.calls
 
 
 def test_single_stopped_report_does_not_auto_advance():

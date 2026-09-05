@@ -336,6 +336,13 @@ class PlayerStateMachine:
             self._start_track(next_number)
             self._state = PlayerState.PLAYING
         else:
+            # Send our own stop even though Sonos already reports STOPPED:
+            # plain UPnP Stop leaves the last URI loaded (so the Sonos app
+            # keeps showing our final track), and SonosController.stop()
+            # is also what releases grouped members back to standalone --
+            # a disc playing to the end should free the speakers exactly
+            # like an explicit stop or the pause timeout does.
+            self._sonos.stop()
             self._teardown_all_sessions()
             self._reset_playback_position()
             self._state = PlayerState.STOPPED
