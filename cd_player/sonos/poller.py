@@ -29,6 +29,7 @@ class SonosPoller:
         self._pause_timeout_seconds = pause_timeout_seconds
         self._stop_event = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+        self._last_logged_state: str | None = None
 
     def start(self) -> None:
         self._thread.start()
@@ -44,6 +45,15 @@ class SonosPoller:
                 if not self._sonos.has_selection():
                     continue
                 state = self._sonos.get_transport_state()
+                if state != self._last_logged_state:
+                    # Change-only, so an idle appliance logs nothing --
+                    # this is the primary forensic record for "why did the
+                    # track change?" (e.g. the auto-advance debounce being
+                    # defeated needs the actual poll-by-poll sequence).
+                    logger.info(
+                        "Sonos transport state: %s -> %s", self._last_logged_state, state
+                    )
+                    self._last_logged_state = state
                 self._player.on_sonos_state(state)
                 if state in ("PLAYING", "PAUSED_PLAYBACK"):
                     position = self._sonos.get_position_seconds()

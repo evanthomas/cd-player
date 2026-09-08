@@ -3,6 +3,7 @@
 - Improve the speakers and volume screen
 - Poor feedback when skipping; volume slider
 - Respond to pause/play/stop events from the sonos app
+- Nicer looking UI 
 
 ## Too hard
 - Long delay after inseting the CD before the UI appears

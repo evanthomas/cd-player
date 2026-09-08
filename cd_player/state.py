@@ -333,9 +333,18 @@ class PlayerStateMachine:
         assert self._toc is not None and self._current_track_number is not None
         next_number = self._current_track_number + 1
         if next_number <= self._toc.last_track:
+            logger.info(
+                "Sonos reported STOPPED twice during track %d -- auto-advancing to %d",
+                self._current_track_number,
+                next_number,
+            )
             self._start_track(next_number)
             self._state = PlayerState.PLAYING
         else:
+            logger.info(
+                "Sonos reported STOPPED twice during final track %d -- end of disc",
+                self._current_track_number,
+            )
             # Send our own stop even though Sonos already reports STOPPED:
             # plain UPnP Stop leaves the last URI loaded (so the Sonos app
             # keeps showing our final track), and SonosController.stop()
@@ -387,6 +396,10 @@ class PlayerStateMachine:
 
         self._current_session = session
         self._current_track_number = track_number
+        # The session id is what stream URLs (and waitress's serving/
+        # disconnect log lines) are keyed by -- logging the mapping is what
+        # lets a later journal read attribute those lines to a track.
+        logger.info("starting track %d (rip session %s)", track_number, session.session_id)
         duration_seconds = session.track.length_sectors / CDDA_SECTORS_PER_SECOND
         self._current_track_duration_seconds = duration_seconds
         self._elapsed_seconds = 0.0

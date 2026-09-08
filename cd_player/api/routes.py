@@ -1,13 +1,26 @@
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, jsonify, request
 from soco.exceptions import SoCoException
 
 from cd_player.state import PlayerStateMachine
 
+logger = logging.getLogger(__name__)
+
 
 def build_api_blueprint(player: PlayerStateMachine) -> Blueprint:
     bp = Blueprint("api", __name__)
+
+    @bp.before_request
+    def _log_command():
+        # Nothing else logs requests (waitress has no per-request logging),
+        # and post-hoc debugging of unexpected track changes has repeatedly
+        # needed to distinguish a client's command from the state machine's
+        # own decisions. Commands only -- /status GETs poll once a second.
+        if request.method == "POST":
+            logger.info("client command: POST %s", request.path)
 
     def _guarded(action):
         try:

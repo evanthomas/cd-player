@@ -113,6 +113,7 @@ class DiscMonitor:
             # starting on the "Track N" fallback and never correcting it --
             # Sonos gets that title once, in the initial play_uri() call.
             try:
+                logger.info("auto-play: starting playback for the inserted disc")
                 self._player.play()
             except RuntimeError as exc:
                 # Expected, not a bug -- e.g. no speakers selected. Leave
