@@ -221,20 +221,22 @@ together would undo that.
   (2026-08-27) the panel sits 180° from before, so `ui/app.py`'s default was updated to `270`
   and re-confirmed (rotation upright, taps landing on the right buttons). Don't assume the
   current default generalizes to other panels/mountings without re-verifying on real hardware.
-- **A fresh `play_uri()` call from a STOPPED baseline can make Sonos report a single spurious
-  `STOPPED` tick before settling into `PLAYING`** — a transient blip in the
-  `SetAVTransportURI`+`Play` handshake, confirmed via `GetPositionInfo`/transport-state
-  logging 2026-08-20: the *next* poll after that blip reliably shows `PLAYING` and the track
-  plays normally afterward. `on_sonos_state()`'s `STOPPED` branch used to treat any single
-  `STOPPED` report as end-of-track and immediately auto-advance — which, on the very first
-  track after `play()`, meant it reliably skipped straight to track 2 within one poll
-  interval. This is almost certainly what earlier looked like "button mashing" or a
-  "runaway auto-advance loop" in prior sessions. Fixed by requiring two consecutive
-  `STOPPED` polls (`_pending_stop_confirmations`) before treating it as real — a genuine
-  end-of-track keeps reporting `STOPPED` on the next poll too, a blip doesn't. Only
-  auto-advance-on-STOPPED needed this guard; tracks started via an already-active Sonos
-  session (skip, gapless auto-advance) never exhibited the blip.
-  **This debounce directly sets the audible gap between tracks** — two confirmations means
+- **After a fresh `play_uri()`, Sonos can keep reporting `STOPPED` for 10-17 seconds before
+  flipping to `PLAYING`** — even while it is already fetching the stream. First diagnosed
+  2026-08-20 as a *single* spurious `STOPPED` tick and debounced with two consecutive
+  `STOPPED` polls (`_pending_stop_confirmations`); that held at the 1.5s poll interval, but
+  caught red-handed with transport-state logging 2026-09-08 (home-theatre coordinator,
+  auto-play path): `starting track 1` → 10s of `STOPPED` reports → auto-advance fired →
+  `PLAYING` only appeared 17s in, so track 1 was reliably skipped within seconds of every
+  auto-play. No count-based debounce can cover a window that long, so `on_sonos_state()`
+  now requires having *seen the current track PLAYING at least once*
+  (`_current_track_played`, reset by `_start_track()`) before any `STOPPED` report can mean
+  end-of-track — a genuine end-of-track necessarily passes through `PLAYING` first. The
+  two-consecutive-STOPPED debounce is kept on top to filter mid-playback single-tick blips.
+  Trade-off, accepted deliberately: if Sonos accepts a URI but genuinely never starts
+  playing, the app now stays "playing" (silent) instead of walking through the disc —
+  visible and recoverable via stop/skip, unlike the daily wrongly-skipped track 1.
+  **The STOPPED debounce directly sets the audible gap between tracks** — two confirmations means
   the gap is roughly 2x `--sonos-poll-interval`, not pre-ripping (already fast: the next
   track is normally fully ripped well before it's needed) or Sonos's own reconnect (also
   fast once triggered). Measured live 2026-08-28: at the previous 1.5s default,

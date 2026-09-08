@@ -237,9 +237,11 @@ def test_prerip_and_gapless_auto_advance():
 
     # Sonos reports STOPPED -- our single-track URI ran out -- should
     # auto-advance and reuse the pre-ripped session rather than starting
-    # a fresh rip. Two consecutive STOPPED polls are required (see
-    # test_single_stopped_report_does_not_auto_advance) so a real
-    # end-of-track needs two calls here, not one.
+    # a fresh rip. End-of-track detection requires having seen the track
+    # PLAYING first (see test_stopped_reports_before_track_ever_played_
+    # are_ignored) plus two consecutive STOPPED polls (see
+    # test_single_stopped_report_does_not_auto_advance).
+    player.on_sonos_state("PLAYING")
     player.on_sonos_state("STOPPED")
     player.on_sonos_state("STOPPED")
 
@@ -256,6 +258,7 @@ def test_auto_advance_stops_at_end_of_disc():
     assert player.status()["current_track_number"] == 2
     sonos.calls.clear()
 
+    player.on_sonos_state("PLAYING")
     player.on_sonos_state("STOPPED")
     player.on_sonos_state("STOPPED")
 
@@ -267,6 +270,26 @@ def test_auto_advance_stops_at_end_of_disc():
     assert ("stop",) in sonos.calls
 
 
+def test_stopped_reports_before_track_ever_played_are_ignored():
+    # Caught live 2026-09-08 via transport-state logging: after a fresh
+    # play_uri() the (home-theatre) coordinator kept reporting STOPPED for
+    # 10-17 seconds before engaging -- far longer than any count-based
+    # debounce covers, and what skipped track 1 on every auto-play. A
+    # STOPPED report must never mean end-of-track for a track that has
+    # never been seen PLAYING.
+    player, sonos = make_player()
+    player.set_disc(make_toc(3), None)
+    player.play()
+    sonos.calls.clear()
+
+    for _ in range(40):  # ~20s worth of 0.5s polls
+        player.on_sonos_state("STOPPED")
+
+    assert player.status()["current_track_number"] == 1
+    assert player.status()["state"] == "playing"
+    assert sonos.calls == []
+
+
 def test_single_stopped_report_does_not_auto_advance():
     # Sonos can report one spurious STOPPED tick right after a fresh
     # play_uri() while it's still spinning up (a UPnP handshake blip, not
@@ -274,6 +297,7 @@ def test_single_stopped_report_does_not_auto_advance():
     player, sonos = make_player()
     player.set_disc(make_toc(3), None)
     player.play()
+    player.on_sonos_state("PLAYING")
     sonos.calls.clear()
 
     player.on_sonos_state("STOPPED")
@@ -287,6 +311,7 @@ def test_stopped_report_followed_by_playing_resets_debounce():
     player, sonos = make_player()
     player.set_disc(make_toc(3), None)
     player.play()
+    player.on_sonos_state("PLAYING")
 
     player.on_sonos_state("STOPPED")
     player.on_sonos_state("PLAYING")  # blip resolved -- not a real stop

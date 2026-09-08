@@ -51,13 +51,19 @@ class PlayerStateMachine:
         # live, not played locally) -- updated by SonosPoller.
         self._elapsed_seconds: float = 0.0
         self._current_session: RipSession | None = None
-        # Sonos can report a spurious single STOPPED tick right after
-        # SetAVTransportURI+Play while a fresh URI is still spinning up --
-        # a known UPnP handshake flake, not real end-of-track. Requiring
-        # two consecutive STOPPED polls before acting filters that out
-        # (a genuine end-of-track keeps reporting STOPPED on the next
-        # poll too; a transient blip flips back to PLAYING).
+        # Sonos keeps reporting STOPPED for a while after a fresh
+        # SetAVTransportURI+Play -- originally believed to be a single
+        # spurious tick (2026-08-20), but caught live with transport-state
+        # logging on 2026-09-08: the home-theatre coordinator reported
+        # STOPPED for a full 10-17 seconds after play_uri() (while already
+        # fetching the stream) before flipping to PLAYING. No fixed number
+        # of confirmation polls can filter that out, so end-of-track
+        # detection requires having *seen this track PLAYING first*
+        # (_current_track_played) -- a genuine end-of-track necessarily
+        # passes through PLAYING. The two-consecutive-STOPPED debounce is
+        # kept on top of that to filter any mid-playback single-tick blips.
         self._pending_stop_confirmations = 0
+        self._current_track_played = False
 
         # One track ripped ahead of playback, so auto-advance at end of
         # track is gapless. Only ever populated once the current track's
@@ -261,6 +267,7 @@ class PlayerStateMachine:
                     # from ever blanking.
                     return
                 self._pending_stop_confirmations = 0
+                self._current_track_played = True
                 self._state = PlayerState.PLAYING
             elif sonos_state == "PAUSED_PLAYBACK":
                 self._pending_stop_confirmations = 0
@@ -269,6 +276,13 @@ class PlayerStateMachine:
                     self._paused_since = time.monotonic()
             elif sonos_state == "STOPPED":
                 if self._state == PlayerState.STOPPED:
+                    return
+                if not self._current_track_played:
+                    # Sonos hasn't reported PLAYING for this track yet, so
+                    # this STOPPED is the play_uri() handshake still
+                    # engaging (up to 10-17s of it -- see __init__), not
+                    # end-of-track. Treating it as real is what skipped
+                    # track 1 on every auto-play.
                     return
                 self._pending_stop_confirmations += 1
                 if self._pending_stop_confirmations >= 2:
@@ -396,6 +410,7 @@ class PlayerStateMachine:
 
         self._current_session = session
         self._current_track_number = track_number
+        self._current_track_played = False
         # The session id is what stream URLs (and waitress's serving/
         # disconnect log lines) are keyed by -- logging the mapping is what
         # lets a later journal read attribute those lines to a track.
