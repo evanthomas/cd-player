@@ -233,9 +233,13 @@ together would undo that.
   (`_current_track_played`, reset by `_start_track()`) before any `STOPPED` report can mean
   end-of-track — a genuine end-of-track necessarily passes through `PLAYING` first. The
   two-consecutive-STOPPED debounce is kept on top to filter mid-playback single-tick blips.
-  Trade-off, accepted deliberately: if Sonos accepts a URI but genuinely never starts
-  playing, the app now stays "playing" (silent) instead of walking through the disc —
-  visible and recoverable via stop/skip, unlike the daily wrongly-skipped track 1.
+  Second live finding the same day: the transport can also sit `STOPPED` *indefinitely* —
+  the handshake's `Play` gets swallowed outright, with our URI loaded and the stream already
+  fetched — and one re-issued bare `Play` starts it immediately (the old bogus auto-advance
+  "worked" precisely because its `play_uri()` for track 2 doubled as that retry). So
+  pre-play `STOPPED` polls re-issue `Play` for the *same* track every 10th poll
+  (`_preplay_stopped_polls`), guarded on the app actually being in PLAYING so a
+  skip-while-paused is never un-paused behind the user's back.
   **The STOPPED debounce directly sets the audible gap between tracks** — two confirmations means
   the gap is roughly 2x `--sonos-poll-interval`, not pre-ripping (already fast: the next
   track is normally fully ripped well before it's needed) or Sonos's own reconnect (also

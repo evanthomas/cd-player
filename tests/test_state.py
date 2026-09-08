@@ -270,13 +270,14 @@ def test_auto_advance_stops_at_end_of_disc():
     assert ("stop",) in sonos.calls
 
 
-def test_stopped_reports_before_track_ever_played_are_ignored():
+def test_stopped_reports_before_track_ever_played_retry_play_not_advance():
     # Caught live 2026-09-08 via transport-state logging: after a fresh
-    # play_uri() the (home-theatre) coordinator kept reporting STOPPED for
-    # 10-17 seconds before engaging -- far longer than any count-based
-    # debounce covers, and what skipped track 1 on every auto-play. A
-    # STOPPED report must never mean end-of-track for a track that has
-    # never been seen PLAYING.
+    # play_uri() the (home-theatre) coordinator can sit STOPPED with our
+    # URI loaded -- the handshake's Play command swallowed -- and a
+    # re-issued Play starts it immediately. A STOPPED report must never
+    # mean end-of-track for a track that has never been seen PLAYING
+    # (that's what skipped track 1 on every auto-play); instead Play is
+    # retried for the same track every 10th poll.
     player, sonos = make_player()
     player.set_disc(make_toc(3), None)
     player.play()
@@ -287,6 +288,26 @@ def test_stopped_reports_before_track_ever_played_are_ignored():
 
     assert player.status()["current_track_number"] == 1
     assert player.status()["state"] == "playing"
+    assert sonos.calls == [("play",)] * 4  # retries, never a new track
+
+
+def test_preplay_stopped_while_paused_does_not_reissue_play():
+    # Skip-while-paused loads a new track but deliberately leaves it
+    # paused -- pre-play STOPPED reports must not "recover" it into
+    # playing behind the user's back.
+    player, sonos = make_player()
+    player.set_disc(make_toc(3), None)
+    player.play()
+    player.on_sonos_state("PLAYING")
+    player.pause()
+    player.skip_forward()
+    sonos.calls.clear()
+
+    for _ in range(20):
+        player.on_sonos_state("STOPPED")
+
+    assert player.status()["state"] == "paused"
+    assert player.status()["current_track_number"] == 2
     assert sonos.calls == []
 
 

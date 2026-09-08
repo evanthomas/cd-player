@@ -64,6 +64,10 @@ class PlayerStateMachine:
         # kept on top of that to filter any mid-playback single-tick blips.
         self._pending_stop_confirmations = 0
         self._current_track_played = False
+        # Consecutive STOPPED polls seen before the current track ever
+        # reported PLAYING -- every 10th one re-issues Play (see
+        # on_sonos_state), recovering the swallowed-Play case above.
+        self._preplay_stopped_polls = 0
 
         # One track ripped ahead of playback, so auto-advance at end of
         # track is gapless. Only ever populated once the current track's
@@ -279,10 +283,30 @@ class PlayerStateMachine:
                     return
                 if not self._current_track_played:
                     # Sonos hasn't reported PLAYING for this track yet, so
-                    # this STOPPED is the play_uri() handshake still
-                    # engaging (up to 10-17s of it -- see __init__), not
-                    # end-of-track. Treating it as real is what skipped
-                    # track 1 on every auto-play.
+                    # this STOPPED is not end-of-track: either the
+                    # play_uri() handshake is still engaging, or the Play
+                    # command was swallowed outright -- confirmed live
+                    # 2026-09-08: the coordinator sat STOPPED indefinitely
+                    # with our URI loaded and the stream fetched, and a
+                    # single re-issued Play started it immediately.
+                    # (Treating these reports as end-of-track is what
+                    # skipped track 1 on every auto-play: the bogus
+                    # advance's play_uri() doubled as an accidental
+                    # retry, which is why track 2 always played.) Retry
+                    # Play for the *same* track instead, but only while
+                    # we're meant to be playing -- a pre-play STOPPED
+                    # while PAUSED (e.g. skip while paused) must not
+                    # unpause anything.
+                    if self._state == PlayerState.PLAYING:
+                        self._preplay_stopped_polls += 1
+                        if self._preplay_stopped_polls % 10 == 0:
+                            logger.info(
+                                "track %d has not engaged after %d STOPPED polls"
+                                " -- re-issuing Play",
+                                self._current_track_number,
+                                self._preplay_stopped_polls,
+                            )
+                            self._sonos.play()
                     return
                 self._pending_stop_confirmations += 1
                 if self._pending_stop_confirmations >= 2:
@@ -411,6 +435,7 @@ class PlayerStateMachine:
         self._current_session = session
         self._current_track_number = track_number
         self._current_track_played = False
+        self._preplay_stopped_polls = 0
         # The session id is what stream URLs (and waitress's serving/
         # disconnect log lines) are keyed by -- logging the mapping is what
         # lets a later journal read attribute those lines to a track.
